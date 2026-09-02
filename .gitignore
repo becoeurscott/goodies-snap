@@ -1,0 +1,35 @@
+# ---- secrets & local config ----
+.env
+.env.local
+.env.*.local
+.insforge
+
+# ---- build output ----
+build/
+DerivedData/
+*.xcarchive
+*.ipa
+*.dSYM.zip
+
+# ---- Xcode user state ----
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# ---- macOS ----
+.DS_Store
+._*
+
+# ---- AI agent workspaces ----
+.agent
+.agents
+.augment
+.claude
+.cline
+.github/copilot*
+.kilocode
+.qoder
+.qwen
+.roo
+.trae
+.windsurf

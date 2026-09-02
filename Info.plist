@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.goodies.goodiesSnap</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>goodiessnap</string>
+			</array>
+		</dict>
+	</array>
+	<!-- Only Apple-provided HTTPS/TLS is used, so the app qualifies for the exemption.
+	     Declaring it here stops App Store Connect asking at every single submission. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>goodiesSnap uses the camera to scan a dish and identify what's on the plate.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>goodiesSnap reads photos you pick so it can identify the dish and write the recipe.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>NunitoSans-400.ttf</string>
+		<string>NunitoSans-600.ttf</string>
+		<string>NunitoSans-700.ttf</string>
+		<string>NunitoSans-800.ttf</string>
+		<string>NunitoSans-900.ttf</string>
+	</array>
+</dict>
+</plist>

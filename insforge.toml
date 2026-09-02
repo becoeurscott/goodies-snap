@@ -1,0 +1,33 @@
+[auth]
+allowed_redirect_urls = []
+require_email_verification = false
+verify_email_method = "code"
+reset_password_method = "code"
+disable_signup = false
+
+[auth.password]
+# The sign-up form already refuses anything under 8; the server was still accepting 6,
+# so a direct API call could create a weaker password than the UI allows.
+min_length = 8
+require_number = true
+require_lowercase = true
+require_uppercase = false
+require_special_char = false
+
+[auth.smtp]
+enabled = false
+host = ""
+port = 465
+username = ""
+sender_email = ""
+sender_name = ""
+min_interval_seconds = 60
+
+[storage]
+max_file_size_mb = 50
+
+[realtime]
+retention_days = 0
+
+[schedules]
+retention_days = 7
