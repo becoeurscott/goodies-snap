@@ -84,10 +84,14 @@ final class SocialStore: ObservableObject {
         errorMessage = ""
         do {
             let s = try await work()
+            NSLog("[gs-auth] work succeeded, setting session for %@", s.userID)
             withAnimation(AppStore.sheetAnimation) { session = s }
+            NSLog("[gs-auth] session set, signedIn=%d", signedIn ? 1 : 0)
             Haptics.notify(.success)
             await refresh()
+            NSLog("[gs-auth] refresh done")
         } catch {
+            NSLog("[gs-auth] THREW: %@", error.localizedDescription)
             errorMessage = error.localizedDescription
             Haptics.notify(.error)
         }

@@ -7,10 +7,17 @@ struct MealPlanView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .center) {
-                    IconButton(system: "chevron.left") { store.goBack() }
-                    Text("This week")
-                        .font(nunito(29, .black))
-                        .tracking(-0.6)
+                    // A tab root has nothing to pop back to, so no chevron here.
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("This week")
+                            .font(nunito(29, .black))
+                            .tracking(-0.6)
+                        Text(store.plannedCount == 0
+                             ? "No dinners planned yet"
+                             : "\(store.plannedCount) of \(AppStore.days.count) dinners planned")
+                            .font(nunito(13, .semibold))
+                            .foregroundStyle(Color.gsMuted)
+                    }
                     Spacer()
                     Button { store.planToShopping() } label: {
                         Text("Shop the plan")
@@ -125,6 +132,45 @@ struct MealPickerSheet: View {
                     .overlay(alignment: .bottom) {
                         Rectangle().fill(Color.fg(0.1)).frame(height: 1)
                     }
+
+                if store.recipes.isEmpty {
+                    VStack(spacing: 10) {
+                        Text("No recipes to plan yet")
+                            .font(nunito(16, .extrabold))
+                        Text("Save one first, then you can drop it onto a day.")
+                            .font(nunito(12.5, .semibold))
+                            .foregroundStyle(Color.gsMuted)
+                            .multilineTextAlignment(.center)
+                        HStack(spacing: 10) {
+                            Button {
+                                store.closePicker()
+                                store.go(to: .importer)
+                            } label: {
+                                Text("Save a recipe")
+                                    .font(nunito(13.5, .extrabold))
+                                    .foregroundStyle(Color.white)
+                                    .padding(.horizontal, 16)
+                                    .frame(minHeight: 44)
+                            }
+                            .buttonStyle(DarkButtonStyle())
+
+                            Button {
+                                store.closePicker()
+                                store.openDiscover()
+                            } label: {
+                                Text("Browse")
+                                    .font(nunito(13.5, .extrabold))
+                                    .foregroundStyle(Color.gsFg)
+                                    .padding(.horizontal, 16)
+                                    .frame(minHeight: 44)
+                            }
+                            .buttonStyle(FillButtonStyle())
+                        }
+                        .padding(.top, 4)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 30)
+                }
 
                 ForEach(store.recipes) { r in
                     Button {

@@ -33,3 +33,6 @@ xcuserdata/
 .roo
 .trae
 .windsurf
+
+# admin dashboard local config (contains the anon key)
+admin/config.js

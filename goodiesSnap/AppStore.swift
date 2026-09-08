@@ -5,7 +5,7 @@ import UIKit
 @MainActor
 final class AppStore: ObservableObject {
     enum Phase { case splash, onboard, preferences, createAccount, preparing, app }
-    enum Screen { case home, importer, scanIdentify, scanResults, library, detail, cook, shopping, plan, profile, feed, paywall, auth }
+    enum Screen { case home, importer, scanIdentify, scanResults, library, detail, cook, shopping, basket, plan, profile, feed, discover, paywall, auth }
 
     /// Which way the next screen change should animate.
     enum NavDirection { case forward, backward, lateral }
@@ -13,8 +13,9 @@ final class AppStore: ObservableObject {
     /// Tab-root screens sit at depth 0; anything deeper pushes and can be popped or swiped back.
     static func depth(of screen: Screen) -> Int {
         switch screen {
-        case .home, .importer, .library, .shopping, .feed: return 0
-        case .scanIdentify, .scanResults, .detail, .profile, .plan: return 1
+        // Meal plan is a tab root now, so it sits at depth 0 with the other tabs.
+        case .home, .importer, .library, .shopping, .plan: return 0
+        case .scanIdentify, .scanResults, .detail, .profile, .feed, .discover, .basket: return 1
         case .cook, .paywall, .auth: return 2
         }
     }
@@ -32,6 +33,15 @@ final class AppStore: ObservableObject {
     /// Screen a pushed recipe detail returns to, so back lands where the tap came from.
     @Published private(set) var detailReturn: Screen = .library
     @Published var selId: String?
+
+    // MARK: Discover (server recipe catalog)
+    @Published var catalog: [Recipe] = []
+    @Published var catalogCuisines: [String] = []
+    @Published var catalogCuisine: String? = nil
+    @Published var catalogSearch = ""
+    @Published var catalogLoading = false
+    /// Ids already saved to the library, so Discover can show a "Saved ✓" state.
+    var isInLibrary: (String) -> Bool { { [weak self] id in self?.recipes.contains { $0.id == id } ?? false } }
     @Published var search = ""
     @Published var chip = "All"
     @Published var importText = ""
@@ -70,6 +80,8 @@ final class AppStore: ObservableObject {
     @Published var cookStep = 0
     @Published var pickDay: String?
     @Published var newItem = ""
+    /// Which recipe's shopping basket is open. "__manual__" is the hand-added bucket.
+    @Published var basketID: String?
     @Published var toast = ""
 
     // Persisted data
@@ -173,6 +185,7 @@ final class AppStore: ObservableObject {
 
     /// Called when a session appears, so the user lands back where they were headed.
     func authenticationSucceeded() {
+        NSLog("[gs-auth] authenticationSucceeded phase=%@ screen=%@", "\(phase)", "\(screen)")
         isAuthenticated = true
         if phase == .createAccount {
             enterApp()
@@ -294,27 +307,19 @@ final class AppStore: ObservableObject {
             userName = saved.name ?? "Anny"
             preferences = saved.preferences ?? UserPreferences()
         } else {
-            recipes = SeedData.recipes
+            // A new install starts genuinely empty — no sample recipes.
+            recipes = []
             shopping = []
             plan = [:]
-            userName = "Anny"
+            userName = ""
             preferences = UserPreferences()
         }
-        recipes = Self.withMissingSeedRecipes(in: recipes)
 
         if let data = UserDefaults.standard.data(forKey: Self.entitlementKey),
            let saved = try? JSONDecoder().decode(Entitlement.self, from: data) {
             entitlement = saved
         }
         entitlement.rollOverIfNeeded()
-    }
-
-    private static func withMissingSeedRecipes(in saved: [Recipe]) -> [Recipe] {
-        var merged = saved
-        for seed in SeedData.recipes where !merged.contains(where: { $0.id == seed.id }) {
-            merged.append(seed)
-        }
-        return merged
     }
 
     func persist() {
@@ -430,7 +435,9 @@ final class AppStore: ObservableObject {
         case .detail: return detailReturn
         case .cook: return detailReturn
         case .scanIdentify, .scanResults: return .importer
-        case .profile, .plan: return .home
+        case .profile, .feed: return .home
+        case .basket: return .shopping
+        case .discover: return .library
         case .paywall: return Self.depth(of: paywallReturn) == 0 ? paywallReturn : .importer
         case .auth: return Self.depth(of: authReturn) == 0 ? authReturn : .home
         default: return screen
@@ -444,7 +451,8 @@ final class AppStore: ObservableObject {
         case .cook: return .detail
         case .scanResults: return .scanIdentify
         case .scanIdentify: return .importer
-        case .profile, .plan: return .home
+        case .basket: return .shopping
+        case .profile, .feed: return .home
         case .paywall: return paywallReturn
         case .auth: return authReturn
         default: return nil
@@ -543,7 +551,11 @@ final class AppStore: ObservableObject {
     var greeting: String {
         let hour = Calendar.current.component(.hour, from: Date())
         let part = hour < 12 ? "morning" : (hour < 18 ? "afternoon" : "evening")
-        guard preferences.isComplete else { return "Good \(part), \(userName)" }
+        guard preferences.isComplete else {
+            // A brand-new account has no name yet, so don't leave a dangling comma.
+            let name = userName.trimmingCharacters(in: .whitespaces)
+            return name.isEmpty ? "Good \(part)" : "Good \(part), \(name)"
+        }
         return "Good \(part) · \(preferences.summary)"
     }
 
@@ -579,15 +591,16 @@ final class AppStore: ObservableObject {
         return recipes.map(\.totalMinutes).reduce(0, +) / recipes.count
     }
 
+    /// Clears everything the user has saved. There is no sample content to fall back to.
     func resetLibrary() {
-        recipes = SeedData.recipes
+        recipes = []
         shopping = []
         plan = [:]
         selId = nil
         chip = "All"
         search = ""
         persist()
-        showToast("Library reset to samples")
+        showToast("Everything cleared")
     }
 
     func clearShoppingAll() {
@@ -619,6 +632,192 @@ final class AppStore: ObservableObject {
         Aisle.order
             .map { name in (name, shopping.filter { ($0.category.isEmpty ? "Other" : $0.category) == name }) }
             .filter { !$0.1.isEmpty }
+    }
+
+    enum ShopGroupMode: String { case recipe, aisle }
+    @Published var shopGroupMode: ShopGroupMode = .recipe
+
+    // MARK: Store pricing (Kroger)
+    /// The chosen store, persisted so the user picks it once. nil = no store set.
+    @Published var krogerLocationId: String? = UserDefaults.standard.string(forKey: "gs_kroger_loc") {
+        didSet { UserDefaults.standard.set(krogerLocationId, forKey: "gs_kroger_loc") }
+    }
+    @Published var krogerStoreName: String? = UserDefaults.standard.string(forKey: "gs_kroger_name") {
+        didSet { UserDefaults.standard.set(krogerStoreName, forKey: "gs_kroger_name") }
+    }
+    @Published var storePickerOpen = false
+    @Published var storeCandidates: [PriceService.Store] = []
+    @Published var storeZip = ""
+    @Published var pricesLoading = false
+
+    /// Formats integer cents as a local currency string.
+    func formatPrice(_ cents: Int) -> String {
+        let f = NumberFormatter()
+        f.numberStyle = .currency
+        f.locale = .current
+        return f.string(from: NSNumber(value: Double(cents) / 100)) ?? "$\(cents / 100).\(cents % 100)"
+    }
+
+    func openStorePicker() {
+        storeCandidates = []
+        storeZip = ""
+        storePickerOpen = true
+    }
+
+    func findStores() {
+        guard let token = aiToken else { showAuth(.aiFeature); return }
+        let zip = storeZip.trimmingCharacters(in: .whitespaces)
+        guard zip.count == 5 else { return }
+        Task { @MainActor in
+            do { storeCandidates = try await PriceService.stores(zip: zip, token: token) }
+            catch { handlePriceError(error) }
+        }
+    }
+
+    func chooseStore(_ store: PriceService.Store) {
+        krogerLocationId = store.location_id
+        krogerStoreName = store.name
+        storePickerOpen = false
+        refreshPrices()
+    }
+
+    /// Looks up a price for every item on the list at the chosen store and caches it on the
+    /// items. Requires a store and a signed-in user; otherwise it routes to the right prompt.
+    func refreshPrices() {
+        guard let token = aiToken else { showAuth(.aiFeature); return }
+        guard let loc = krogerLocationId else { openStorePicker(); return }
+        guard !shopping.isEmpty, !pricesLoading else { return }
+        pricesLoading = true
+        let names = Array(Set(shopping.map(\.name)))
+        Task { @MainActor in
+            defer { pricesLoading = false }
+            do {
+                let priced = try await PriceService.prices(items: names, locationID: loc, token: token)
+                for i in shopping.indices {
+                    if let match = priced[shopping[i].name] {
+                        shopping[i].priceCents = match.cents
+                        shopping[i].priceImage = match.image
+                        shopping[i].priceStore = krogerStoreName
+                    }
+                }
+                persist()
+                let matched = shopping.filter { $0.priceCents != nil }.count
+                showToast(matched == 0 ? "No prices found at this store" : "Prices updated for \(matched) items")
+            } catch {
+                handlePriceError(error)
+            }
+        }
+    }
+
+    private func handlePriceError(_ error: Error) {
+        if let e = error as? PriceService.PriceError {
+            switch e {
+            case .notSignedIn: showAuth(.aiFeature)
+            case .notConfigured: showToast("Store prices aren't available yet")
+            case .failed(let m): showToast(m)
+            }
+        } else {
+            showToast("Couldn't load prices")
+        }
+    }
+
+    /// Shopping items grouped by their source recipe, in the order recipes were added, with
+    /// hand-added items last under "Added by you".
+    /// Opens one recipe's basket.
+    func openBasket(_ id: String) {
+        basketID = id
+        go(to: .basket)
+    }
+
+    /// The basket currently on screen.
+    var openBasketGroup: (id: String, title: String, items: [ShoppingItem])? {
+        guard let basketID else { return nil }
+        return shopByRecipe.first { $0.id == basketID }
+    }
+
+    /// Aisle-ordered sections within one basket — walking the shop in order still helps
+    /// even when the list is grouped by recipe.
+    func aisleSections(of items: [ShoppingItem]) -> [(name: String, items: [ShoppingItem])] {
+        Aisle.order
+            .map { name in (name, items.filter { ($0.category.isEmpty ? "Other" : $0.category) == name }) }
+            .filter { !$0.1.isEmpty }
+    }
+
+    /// Removes a whole basket from the list.
+    func removeBasket(_ id: String) {
+        Haptics.tap(.medium)
+        withAnimation(Self.pushAnimation) {
+            shopping.removeAll { ($0.recipeID ?? "__manual__") == id }
+        }
+        persist()
+        if basketID == id { goBack() }
+    }
+
+    var shopByRecipe: [(id: String, title: String, items: [ShoppingItem])] {
+        var order: [String] = []
+        var buckets: [String: [ShoppingItem]] = [:]
+        var titles: [String: String] = [:]
+        for item in shopping {
+            let key = item.recipeID ?? "__manual__"
+            if buckets[key] == nil { order.append(key); buckets[key] = [] }
+            buckets[key]?.append(item)
+            titles[key] = item.recipeTitle ?? "Added by you"
+        }
+        // Keep "Added by you" at the bottom.
+        order.sort { a, b in (a == "__manual__" ? 1 : 0) < (b == "__manual__" ? 1 : 0) }
+        return order.map { (id: $0, title: titles[$0] ?? "Added by you", items: buckets[$0] ?? []) }
+    }
+
+    /// Total of known prices in a set of items, in cents (items without a price are skipped).
+    func priceTotalCents(_ items: [ShoppingItem]) -> Int? {
+        let known = items.compactMap(\.priceCents)
+        return known.isEmpty ? nil : known.reduce(0, +)
+    }
+
+    // MARK: - Discover
+
+    func openDiscover() {
+        go(to: .discover)
+        if catalog.isEmpty { Task { await loadCatalog(reset: true) } }
+        if catalogCuisines.isEmpty {
+            Task { catalogCuisines = (try? await CatalogService.cuisines()) ?? [] }
+        }
+    }
+
+    func setCatalogCuisine(_ cuisine: String?) {
+        catalogCuisine = cuisine
+        Task { await loadCatalog(reset: true) }
+    }
+
+    func searchCatalog() {
+        Task { await loadCatalog(reset: true) }
+    }
+
+    @MainActor
+    func loadCatalog(reset: Bool) async {
+        guard !catalogLoading else { return }
+        catalogLoading = true
+        defer { catalogLoading = false }
+        let offset = reset ? 0 : catalog.count
+        do {
+            let rows = try await CatalogService.fetch(
+                cuisine: catalogCuisine, search: catalogSearch, limit: 60, offset: offset)
+            let recipes = rows.map(\.recipe)
+            if reset { catalog = recipes } else { catalog.append(contentsOf: recipes) }
+        } catch {
+            if reset { catalog = [] }
+            showToast("Couldn't load Discover. Check your connection.")
+        }
+    }
+
+    /// Opens a catalog recipe in the normal detail screen. It is added to the library on
+    /// first view so cook mode, favouriting and the shopping list all work on it.
+    func openCatalogRecipe(_ recipe: Recipe) {
+        if !recipes.contains(where: { $0.id == recipe.id }) {
+            recipes.insert(recipe, at: 0)
+            persist()
+        }
+        open(recipe)
     }
 
     // MARK: - Recipes
@@ -655,7 +854,7 @@ final class AppStore: ObservableObject {
         var added = 0
         withAnimation(Self.pushAnimation) {
             for i in recipe.ingredients where !shopping.contains(where: { $0.name.lowercased() == i.name.lowercased() && !$0.done }) {
-                shopping.append(ShoppingItem(id: "s" + String(UUID().uuidString.prefix(6)), name: i.name, qty: i.qty, category: i.category, done: false))
+                shopping.append(ShoppingItem(id: "s" + String(UUID().uuidString.prefix(6)), name: i.name, qty: i.qty, category: i.category, done: false, recipeID: recipe.id, recipeTitle: recipe.title))
                 added += 1
             }
         }

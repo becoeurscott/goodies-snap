@@ -138,6 +138,28 @@ struct RecipeDetailView: View {
                 Button("Delete", role: .destructive) { store.deleteSelected() }
                 Button("Cancel", role: .cancel) {}
             }
+        } else {
+            // Reachable when the recipe is deleted while this screen is open. Without an
+            // else this rendered as a blank screen — and cook mode hides the tab bar, so
+            // there was no visible way out.
+            VStack(spacing: 12) {
+                Text("That recipe is no longer here")
+                    .font(nunito(18, .extrabold))
+                Text("It may have been deleted.")
+                    .font(nunito(13, .semibold))
+                    .foregroundStyle(Color.gsMuted)
+                Button { store.goBack() } label: {
+                    Text("Go back")
+                        .font(nunito(14, .extrabold))
+                        .foregroundStyle(Color.white)
+                        .padding(.horizontal, 24)
+                        .frame(minHeight: 48)
+                }
+                .buttonStyle(DarkButtonStyle())
+                .padding(.top, 6)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.gsBg)
         }
     }
 

@@ -33,8 +33,8 @@ extension Color {
         )
     }
 
-    /// Screen background — clean white with a faint warm whisper.
-    static let gsBg = Color(hex: 0xFBFAF3)
+    /// Screen background — pure white.
+    static let gsBg = Color(hex: 0xFFFFFF)
     /// Primary text — near-black with a warm undertone.
     static let gsFg = Color(hex: 0x1E1A10)
     /// Cards / sheets — pure white, popping off the tinted background.
@@ -90,7 +90,13 @@ struct SoftCard: ViewModifier {
         content
             .background(Color.gsCard)
             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .shadow(color: Color.black.opacity(0.06), radius: 18, x: 0, y: 10)
+            // The ground is pure white and so are cards, so a shadow alone no longer
+            // separates them — a hairline edge is what keeps the card readable.
+            .overlay(
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(Color.gsFg.opacity(0.08), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.07), radius: 18, x: 0, y: 10)
     }
 }
 

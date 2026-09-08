@@ -12,25 +12,32 @@ struct HomeView: View {
                 HighlightStrip()
                     .padding(.top, 16)
 
-                // Picks sit directly under the banner — the two most browsable things first.
-                sectionHeader(
-                    "Tonight's picks",
-                    count: store.heroRecipes.count,
-                    action: "See All"
-                ) { store.go(to: .library) }
-                .padding(.top, 20)
+                if store.recipes.isEmpty {
+                    // A new account has no recipes, so an empty carousel with a "0" badge
+                    // would be worse than nothing — offer the two real ways to fill it.
+                    EmptyLibraryCard()
+                        .padding(.top, 20)
+                } else {
+                    // Picks sit directly under the banner — the two most browsable things first.
+                    sectionHeader(
+                        "Tonight's picks",
+                        count: store.heroRecipes.count,
+                        action: "See All"
+                    ) { store.go(to: .library) }
+                    .padding(.top, 20)
 
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 14) {
-                        ForEach(store.heroRecipes) { r in
-                            HeroCard(recipe: r)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 14) {
+                            ForEach(store.heroRecipes) { r in
+                                HeroCard(recipe: r)
+                            }
                         }
+                        .padding(.horizontal, 2)
+                        .padding(.vertical, 12)
                     }
-                    .padding(.horizontal, 2)
-                    .padding(.vertical, 12)
+                    .padding(.horizontal, -2)
+                    .padding(.top, 2)
                 }
-                .padding(.horizontal, -2)
-                .padding(.top, 2)
 
                 WeekPlanCard(
                     planned: store.plannedCount,
@@ -46,11 +53,13 @@ struct HomeView: View {
                 ShoppingCard()
                     .padding(.top, 12)
 
-                sectionHeader("Recently saved", count: nil, action: nil) {}
-                    .padding(.top, 26)
+                if !store.recipes.isEmpty {
+                    sectionHeader("Recently saved", count: nil, action: nil) {}
+                        .padding(.top, 26)
 
-                ForEach(store.recentlySaved) { r in
-                    RecentRow(recipe: r)
+                    ForEach(store.recentlySaved) { r in
+                        RecentRow(recipe: r)
+                    }
                 }
 
                 if social.signedIn, social.posts.contains(where: { $0.recipe != nil }) {
@@ -73,7 +82,7 @@ struct HomeView: View {
 
     private var header: some View {
         HStack {
-            IconButton(system: "calendar") { store.go(to: .plan) }
+            IconButton(system: "person.2.fill") { store.go(to: .feed) }
             Spacer()
             VStack(spacing: 1) {
                 Text("goodiesSnap")
@@ -657,5 +666,47 @@ struct RecentRow: View {
         }
         .buttonStyle(PressableStyle())
         .padding(.top, 10)
+    }
+}
+
+
+/// Shown on Home before the user has saved anything. Names the two ways in.
+struct EmptyLibraryCard: View {
+    @EnvironmentObject var store: AppStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Your recipe book is empty")
+                .font(nunito(19, .extrabold))
+            Text("Save one from a link, a video or a photo — or browse the collection for something to cook tonight.")
+                .font(nunito(13.5, .semibold))
+                .foregroundStyle(Color.gsMuted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 10) {
+                Button { store.go(to: .importer) } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: "plus").font(.system(size: 12, weight: .black))
+                        Text("Save a recipe").font(nunito(13.5, .extrabold))
+                    }
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 46)
+                }
+                .buttonStyle(DarkButtonStyle())
+
+                Button { store.go(to: .discover) } label: {
+                    Text("Browse recipes")
+                        .font(nunito(13.5, .extrabold))
+                        .foregroundStyle(Color.gsFg)
+                        .padding(.horizontal, 16)
+                        .frame(minHeight: 46)
+                }
+                .buttonStyle(FillButtonStyle())
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .softCard(radius: 22)
     }
 }

@@ -29,6 +29,9 @@ struct LibraryView: View {
                     .frame(height: 54)
                     .softCard(radius: 18)
 
+                    IconButton(system: "sparkles") { store.openDiscover() }
+                        .frame(width: 54, height: 54)
+
                     IconButton(system: "bell", badge: store.undoneCount > 0) { store.go(to: .profile) }
                         .frame(width: 54, height: 54)
                 }
@@ -64,7 +67,30 @@ struct LibraryView: View {
                 }
                 .padding(.top, 22)
 
-                if store.filtered.isEmpty {
+                if store.recipes.isEmpty {
+                    // Genuinely empty is a different situation from a search with no hits.
+                    VStack(spacing: 10) {
+                        Text("No recipes yet")
+                            .font(nunito(19, .extrabold))
+                        Text("Anything you save with AI, or add from the collection, lands here.")
+                            .font(nunito(13, .semibold))
+                            .foregroundStyle(Color.gsMuted)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button { store.go(to: .importer) } label: {
+                            Text("Save your first recipe")
+                                .font(nunito(13.5, .extrabold))
+                                .foregroundStyle(Color.white)
+                                .padding(.horizontal, 20)
+                                .frame(minHeight: 46)
+                        }
+                        .buttonStyle(DarkButtonStyle())
+                        .padding(.top, 4)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 44)
+                    .padding(.horizontal, 24)
+                } else if store.filtered.isEmpty {
                     Text("Nothing matches — try another ingredient or title.")
                         .font(nunito(13, .semibold))
                         .foregroundStyle(Color.gsMuted)

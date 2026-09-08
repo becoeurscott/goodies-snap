@@ -46,7 +46,13 @@ struct RootView: View {
         }
         .foregroundStyle(Color.gsFg)
         .font(nunito(14, .semibold))
-        .onChange(of: social.signedIn) { _, yes in store.isAuthenticated = yes }
+        .onChange(of: social.signedIn) { _, yes in
+            store.isAuthenticated = yes
+            // Drive the post-sign-in redirect here rather than from AuthView: RootView is
+            // always mounted, so this fires reliably even as the auth screen tears down.
+            // authenticationSucceeded() only navigates when actually on the auth flow.
+            if yes { store.authenticationSucceeded() }
+        }
         // The token is what lets AI calls use the metered proxy instead of a local key.
         .onChange(of: social.session?.accessToken) { _, token in store.aiToken = token }
         .onOpenURL { url in
@@ -82,12 +88,26 @@ struct RootView: View {
                     store.preferenceIndex = max(0, i)
                 }
             }
+            // Debug-only sign-in for verification runs (`-gsSignIn email:password`).
+            // Wrapped in DEBUG so no shipped build can authenticate from a launch argument.
+            #if DEBUG
+            if let creds = UserDefaults.standard.string(forKey: "gsSignIn") {
+                let parts = creds.split(separator: ":", maxSplits: 1).map(String.init)
+                if parts.count == 2 {
+                    Task { @MainActor in
+                        await social.signIn(email: parts[0], password: parts[1])
+                        store.isAuthenticated = social.signedIn
+                        store.aiToken = social.session?.accessToken
+                    }
+                }
+            }
+            #endif
             // Extraction automation (`-gsExtract <text>`): runs a real import end to end.
             if let text = UserDefaults.standard.string(forKey: "gsExtract") {
                 jump(to: "import")
                 store.importText = text
                 Task { @MainActor in
-                    try? await Task.sleep(for: .seconds(0.4))
+                    try? await Task.sleep(for: .seconds(3.0))   // let a debug sign-in land first
                     store.analyze()
                 }
             }
@@ -121,6 +141,13 @@ struct RootView: View {
         case "plan": store.go(to: .plan)
         case "import": store.go(to: .importer)
         case "profile": store.go(to: .profile)
+        case "discover": store.openDiscover()
+        case "picker":
+            store.go(to: .plan)
+            store.openPicker(day: store.todayName)
+        case "basket":
+            if let first = store.shopByRecipe.first { store.openBasket(first.id) }
+            else { store.go(to: .shopping) }
         case "scan": store.startPhotoScan()
         case "paywall": store.showPaywall(.upgrade)
         case "paywall-empty":
@@ -260,9 +287,11 @@ struct RootView: View {
                 case .detail: RecipeDetailView()
                 case .cook: CookModeView()
                 case .shopping: ShoppingView()
+                case .basket: BasketView()
                 case .plan: MealPlanView()
                 case .profile: ProfileView()
                 case .feed: FeedView()
+                case .discover: DiscoverView()
                 case .paywall: PaywallView()
                 case .auth: AuthView()
                 }
@@ -366,7 +395,7 @@ struct TabBarView: View {
             scanButton
                 .padding(.horizontal, 4)
 
-            tab(.feed, active: store.activeTabRoot == .feed, system: "person.2.fill")
+            tab(.plan, active: store.activeTabRoot == .plan, system: "calendar", badge: store.plannedCount)
             tab(.shopping, active: store.activeTabRoot == .shopping, system: "cart.fill", badge: store.undoneCount)
         }
         .padding(.horizontal, 7)

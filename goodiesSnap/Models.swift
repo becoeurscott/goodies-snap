@@ -42,6 +42,16 @@ struct ShoppingItem: Codable, Hashable, Identifiable {
     var qty: String
     var category: String
     var done: Bool
+    /// Which recipe this item came from, so the list can group by recipe. Nil = added by
+    /// hand. Optional with defaults keeps older persisted lists decodable.
+    var recipeID: String? = nil
+    var recipeTitle: String? = nil
+    /// Last looked-up store price, in cents, and the store it came from. Cached so the list
+    /// doesn't re-query on every render.
+    var priceCents: Int? = nil
+    var priceStore: String? = nil
+    /// Product image from the store lookup (Kroger), shown next to the item.
+    var priceImage: String? = nil
 }
 
 struct UserPreferences: Codable, Hashable {
