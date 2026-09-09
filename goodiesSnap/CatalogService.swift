@@ -79,6 +79,34 @@ enum CatalogService {
         return Array(Set(rows.map(\.cuisine).filter { !$0.isEmpty })).sorted()
     }
 
+    /// Recommendations tailored to the user's taste profile, drawn from the catalog.
+    ///
+    /// Diet maps to TheMealDB categories/cuisines the query can filter on server-side; the
+    /// avoid-list is applied on the client (it needs to look inside each recipe's
+    /// ingredients). Results are shuffled for variety so the dashboard isn't identical
+    /// every launch.
+    static func recommended(for prefs: UserPreferences, limit: Int = 8) async throws -> [Row] {
+        var q = "select=*&published=eq.true&limit=48"
+
+        switch prefs.diet {
+        case "Vegetarian":
+            q += "&category=in.(Vegetarian,Vegan)"
+        case "High protein":
+            q += "&category=in.(Chicken,Beef,Seafood,Pork,Lamb)"
+        case "Low carb":
+            q += "&category=in.(Seafood,Chicken,Beef,Lamb)"
+        case "Mediterranean":
+            q += "&cuisine=in.(Greek,Turkish,Italian,Moroccan,Spanish,Tunisian,Croatian)"
+        default:
+            break // "Anything" / unset: whole catalog
+        }
+
+        let rows: [Row] = try await get("catalog_recipes", query: q)
+        // Exclude anything the user asked to avoid, then pick a varied handful.
+        let filtered = rows.filter { !prefs.matchesAvoidance($0.recipe) }
+        return Array(filtered.shuffled().prefix(limit))
+    }
+
     // MARK: - Transport
 
     private static func get<T: Decodable>(_ table: String, query: String) async throws -> T {

@@ -2,14 +2,14 @@ import SwiftUI
 
 struct ShoppingView: View {
     @EnvironmentObject var store: AppStore
+    /// Briefly true right after an item is added, driving the success animation.
+    @State private var justAdded = false
+    @FocusState private var addFocused: Bool
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 header
-
-                addRow
-                    .padding(.top, 16)
 
                 if store.shopping.isEmpty {
                     emptyState
@@ -25,6 +25,10 @@ struct ShoppingView: View {
                     }
                     .padding(.top, 16)
                 }
+
+                // The add-item control lives below the list.
+                addBar
+                    .padding(.top, store.shopping.isEmpty ? 8 : 24)
             }
             .padding(.horizontal, 22)
             .padding(.top, 16)
@@ -32,6 +36,67 @@ struct ShoppingView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .sheet(isPresented: $store.storePickerOpen) { StorePickerSheet() }
+    }
+
+    // MARK: Add item (below the list)
+
+    private func add() {
+        guard store.addItem() else { return }
+        addFocused = true                       // keep the keyboard up for quick multi-add
+        Haptics.notify(.success)
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.55)) { justAdded = true }
+        // Reset the confirmation shortly after so it reads as a flash, not a state.
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.1))
+            withAnimation(.easeOut(duration: 0.3)) { justAdded = false }
+        }
+    }
+
+    private var addBar: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Success confirmation, sliding in above the field.
+            if justAdded {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 13, weight: .bold))
+                    Text("Added to your list")
+                        .font(nunito(12.5, .extrabold))
+                }
+                .foregroundStyle(Color.gsAccentInk)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            HStack(spacing: 10) {
+                TextField("", text: $store.newItem,
+                          prompt: Text("Add an item…").foregroundStyle(Color.fg(0.35)))
+                    .font(nunito(13.5, .semibold))
+                    .focused($addFocused)
+                    .submitLabel(.done)
+                    .padding(.horizontal, 18)
+                    .frame(minHeight: 52)
+                    .background(Color.fg(0.06))
+                    .clipShape(Capsule())
+                    .overlay(Capsule().strokeBorder(Color.fg(0.14), lineWidth: 1))
+                    .onSubmit { add() }
+
+                // The add button: plus normally, a green checkmark bounce on success.
+                Button { add() } label: {
+                    Image(systemName: justAdded ? "checkmark" : "plus")
+                        .font(.system(size: 19, weight: .heavy))
+                        .foregroundStyle(Color.gsDock)
+                        .scaleEffect(justAdded ? 1.18 : 1)
+                        .frame(width: 52, height: 52)
+                        .background(justAdded ? Color.gsMint : Color.gsPeach)
+                        .clipShape(Circle())
+                        .shadow(color: (justAdded ? Color.gsMint : Color.gsPeach).opacity(0.45),
+                                radius: justAdded ? 12 : 6, y: 4)
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                .buttonStyle(PressableStyle(scale: 0.88))
+                .disabled(store.newItem.trimmingCharacters(in: .whitespaces).isEmpty && !justAdded)
+            }
+        }
+        .animation(.spring(response: 0.32, dampingFraction: 0.6), value: justAdded)
     }
 
     // MARK: Store + prices
@@ -98,34 +163,12 @@ struct ShoppingView: View {
         }
     }
 
-    private var addRow: some View {
-        HStack(spacing: 10) {
-            TextField("", text: $store.newItem,
-                      prompt: Text("Add an item…").foregroundStyle(Color.fg(0.35)))
-                .font(nunito(13.5, .semibold))
-                .padding(.horizontal, 18)
-                .frame(minHeight: 48)
-                .background(Color.fg(0.06))
-                .clipShape(Capsule())
-                .overlay(Capsule().strokeBorder(Color.fg(0.14), lineWidth: 1))
-                .onSubmit { store.addItem() }
-
-            Button { store.addItem() } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundStyle(Color.gsFg)
-                    .frame(width: 48, height: 48)
-            }
-            .buttonStyle(PeachButtonStyle())
-        }
-    }
-
     private var emptyState: some View {
         VStack(spacing: 6) {
             Text("Your list is empty")
                 .font(nunito(19, .extrabold))
                 .foregroundStyle(Color.fg(0.7))
-            Text("Open a recipe and add its ingredients, or add items above.")
+            Text("Open a recipe and add its ingredients, or add items below.")
                 .font(nunito(12.5, .semibold))
                 .foregroundStyle(Color.fg(0.45))
                 .multilineTextAlignment(.center)

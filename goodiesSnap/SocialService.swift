@@ -73,6 +73,15 @@ enum SocialAPI {
         return Session(accessToken: token, refreshToken: json["refreshToken"] as? String, userID: id, displayName: name)
     }
 
+    /// Whether the signed-in account still exists. A deleted account's profile row is gone
+    /// (cascade), so an empty result means the session is a ghost and should be dropped.
+    /// Throws `.sessionExpired` on 401 so the caller can sign out on an expired token too.
+    static func accountExists(session: Session) async throws -> Bool {
+        let rows: [Profile] = try await get(
+            "profiles", query: "id=eq.\(session.userID)&limit=1", token: session.accessToken)
+        return !rows.isEmpty
+    }
+
     /// Exchange the refresh token for a fresh session (tokens rotate — persist the result).
     static func refresh(session: Session) async throws -> Session {
         guard let refreshToken = session.refreshToken else { throw SocialError.sessionExpired }
@@ -110,6 +119,17 @@ enum SocialAPI {
 
     static func fetchPosts(token: String) async throws -> [FeedPost] {
         try await get("posts", query: "order=created_at.desc&limit=100", token: token)
+    }
+
+    /// The community's most-cooked recipes: recipe-bearing posts ranked by likes. Powers the
+    /// "Popular right now" carousel. Empty early on, which the caller handles by falling back
+    /// to featured catalog dishes.
+    static func popularRecipes(token: String, limit: Int = 12) async throws -> [Recipe] {
+        let posts: [FeedPost] = try await get(
+            "posts",
+            query: "recipe=not.is.null&order=like_count.desc,comment_count.desc&limit=\(limit)",
+            token: token)
+        return posts.compactMap(\.recipe)
     }
 
     static func fetchMyLikes(token: String, userID: String) async throws -> Set<String> {

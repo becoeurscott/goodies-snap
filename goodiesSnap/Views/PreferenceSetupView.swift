@@ -40,6 +40,14 @@ struct PreferenceSetupView: View {
         }
     }
 
+    /// Live horizontal travel of the page under the finger.
+    @State private var dragX: CGFloat = 0
+    @State private var pageWidth: CGFloat = 400
+    /// True while a committed page turn is playing, so a second swipe can't interleave.
+    @State private var turning = false
+    /// The time slider drags horizontally too; without this a slide would also turn the page.
+    @State private var adjustingSlider = false
+
     private var step: Step {
         Step(rawValue: max(0, min(store.preferenceIndex, Step.allCases.count - 1))) ?? .goal
     }
@@ -63,51 +71,37 @@ struct PreferenceSetupView: View {
             VStack(alignment: .leading, spacing: 0) {
                 topBar
 
-                Spacer(minLength: 26)
+                Spacer(minLength: 24)
 
                 VStack(alignment: .leading, spacing: 0) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(step.eyebrow.uppercased())
-                            .font(nunito(11, .black))
-                            .tracking(2.1)
-                            .foregroundStyle(Color.gsAccentInk)
-                            .stagger(0)
-
                         Text(step.title)
-                            .font(nunito(31, .black))
+                            .font(nunito(30, .black))
                             .lineSpacing(1)
                             .fixedSize(horizontal: false, vertical: true)
-                            .stagger(1)
+                            .stagger(0)
 
                         Text(step.subtitle)
                             .font(nunito(14, .semibold))
                             .foregroundStyle(Color.gsMuted)
                             .lineSpacing(2)
                             .fixedSize(horizontal: false, vertical: true)
-                            .stagger(2)
+                            .stagger(1)
                     }
 
                     content
                         .padding(.top, 24)
                 }
-                // Re-keying on the step is what gives each question its own entrance.
+                // Re-keying on the step is what gives each question its own entrance. The
+                // page itself is moved by `dragX` rather than by a transition, so a swipe
+                // tracks the finger continuously instead of jumping on release.
                 .id(store.preferenceIndex)
-                .transition(
-                    .asymmetric(
-                        insertion: .move(edge: store.preferenceForward ? .trailing : .leading)
-                            .combined(with: .opacity),
-                        removal: .move(edge: store.preferenceForward ? .leading : .trailing)
-                            .combined(with: .opacity)
-                    )
-                )
+                .offset(x: dragX)
+                .opacity(1 - min(abs(dragX) / (pageWidth * 0.9), 0.7))
 
-                Spacer(minLength: 28)
+                Spacer(minLength: 24)
 
-                progress
-                    .frame(maxWidth: .infinity)
-                    .padding(.bottom, 18)
-
-                Button { store.preferenceNext(maxIndex: Step.allCases.count - 1) } label: {
+                Button { goForward() } label: {
                     HStack(spacing: 8) {
                         Text(isLast ? "Save my taste profile" : "Continue")
                             .font(nunito(15, .extrabold))
@@ -125,46 +119,112 @@ struct PreferenceSetupView: View {
             .padding(.horizontal, 24)
         }
         .animation(AppStore.stepAnimation, value: store.preferenceIndex)
+        .background(
+            GeometryReader { geo in
+                Color.clear.onAppear { pageWidth = geo.size.width }
+            }
+        )
+        // The questions read like pages, so they turn like pages: the page follows the
+        // finger, and only commits past a threshold. Forward is gated on the question being
+        // answered, matching the Continue button; blocked drags rubber-band instead.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 14)
+                .onChanged { value in
+                    guard !turning, !adjustingSlider else { return }
+                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                    let raw = value.translation.width
+                    let blocked = (raw < 0 && !canContinue) || (raw > 0 && store.preferenceIndex == 0)
+                    dragX = blocked ? raw * 0.2 : raw
+                }
+                .onEnded { value in
+                    guard !turning, !adjustingSlider else { dragX = 0; return }
+                    let dx = value.translation.width
+                    let flick = value.predictedEndTranslation.width
+                    let forward = dx < -70 || flick < -190
+                    let back = dx > 70 || flick > 190
+                    if forward, canContinue {
+                        goForward()
+                    } else if back, store.preferenceIndex > 0 {
+                        goBack()
+                    } else {
+                        withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) { dragX = 0 }
+                    }
+                }
+        )
     }
 
+    // MARK: - Page turns
+
+    private func goForward() {
+        guard canContinue, !turning else { return }
+        // The last step leaves the flow entirely, so there is no page to turn.
+        guard !isLast else {
+            dragX = 0
+            store.preferenceNext(maxIndex: Step.allCases.count - 1)
+            return
+        }
+        turn(to: -1) { store.preferenceNext(maxIndex: Step.allCases.count - 1) }
+    }
+
+    private func goBack() {
+        guard store.preferenceIndex > 0, !turning else { return }
+        turn(to: 1) { store.preferenceBack() }
+    }
+
+    /// Throws the current page off `direction`, swaps the question while it is off-screen,
+    /// then springs the next one in from the opposite edge — one continuous movement.
+    private func turn(to direction: CGFloat, _ change: @escaping () -> Void) {
+        turning = true
+        let travel = pageWidth * 1.05
+        // Carry on from wherever the finger left off rather than restarting the motion.
+        let remaining = max(0.10, min(0.20, Double((travel - abs(dragX)) / travel) * 0.20))
+        withAnimation(.easeOut(duration: remaining)) { dragX = direction * travel }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + remaining) {
+            var instant = Transaction()
+            instant.disablesAnimations = true
+            withTransaction(instant) {
+                change()
+                dragX = -direction * travel   // place the incoming page just off the far edge
+            }
+            withAnimation(.spring(response: 0.44, dampingFraction: 0.86)) { dragX = 0 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.44) { turning = false }
+        }
+    }
+
+    /// Back button + a top progress bar (segments fill as you advance), like the reference.
     private var topBar: some View {
-        HStack {
-            if store.preferenceIndex > 0 {
-                Button { store.preferenceBack() } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 14, weight: .black))
-                        .foregroundStyle(Color.gsFg)
-                        .frame(width: 40, height: 40)
-                        .background(Color.gsFill)
-                        .clipShape(Circle())
+        HStack(spacing: 14) {
+            Button { goBack() } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 15, weight: .black))
+                    .foregroundStyle(Color.gsFg)
+                    .frame(width: 42, height: 42)
+                    .background(Color.gsFill)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .opacity(store.preferenceIndex > 0 ? 1 : 0)
+            .disabled(store.preferenceIndex == 0)
+
+            HStack(spacing: 6) {
+                ForEach(Step.allCases.indices, id: \.self) { i in
+                    Capsule()
+                        .fill(i <= store.preferenceIndex ? Color.gsPeach : Color.gsFill)
+                        .frame(height: 6)
+                        .frame(maxWidth: .infinity)
+                        .animation(AppStore.stepAnimation, value: store.preferenceIndex)
                 }
-                .buttonStyle(.plain)
-            } else {
-                Color.clear.frame(width: 40, height: 40)
             }
 
-            Spacer()
-
-            Image("SplashLogo")
-                .resizable()
-                .interpolation(.high)
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 72, height: 72)
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-
-            Spacer()
-
-            Button {
-                store.askForAccount()
-            } label: {
+            Button { store.askForAccount() } label: {
                 Text("Skip")
                     .font(nunito(13, .bold))
                     .foregroundStyle(Color.gsMuted)
-                    .frame(width: 40, height: 40)
             }
             .buttonStyle(.plain)
         }
-        .padding(.top, 10)
+        .padding(.top, 12)
     }
 
     @ViewBuilder
@@ -175,17 +235,19 @@ struct PreferenceSetupView: View {
                 store.answerPreference { $0.goal = value }
             }
         case .diet:
-            optionGrid(["Anything", "Vegetarian", "High protein", "Low carb", "Mediterranean"], selected: store.preferences.diet) { value in
+            // A 2-column emoji tile grid, matching the reference's diet picker.
+            emojiTileGrid(["Anything", "Vegetarian", "High protein", "Low carb", "Mediterranean"],
+                          selected: store.preferences.diet) { value in
                 store.answerPreference { $0.diet = value }
             }
         case .avoid:
             VStack(spacing: 10) {
                 ForEach(Array(["Peanuts", "Dairy", "Shellfish", "Gluten", "Pork"].enumerated()), id: \.element) { i, value in
                     PreferenceOption(
+                        emoji: Self.emoji(for: value),
                         title: value,
-                        subtitle: store.preferences.avoid.contains(value) ? "We will keep this out of top picks" : "Tap to avoid",
-                        selected: store.preferences.avoid.contains(value),
-                        system: store.preferences.avoid.contains(value) ? "checkmark.circle.fill" : "circle"
+                        subtitle: store.preferences.avoid.contains(value) ? "We'll keep this out of top picks" : "Tap to avoid",
+                        selected: store.preferences.avoid.contains(value)
                     ) {
                         store.answerPreference { prefs in
                             if prefs.avoid.contains(value) {
@@ -215,6 +277,15 @@ struct PreferenceSetupView: View {
                     step: 5
                 )
                 .tint(Color.gsPeach)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { _ in adjustingSlider = true }
+                        .onEnded { _ in
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                                adjustingSlider = false
+                            }
+                        }
+                )
             }
             .stagger(3)
         case .servings:
@@ -245,13 +316,69 @@ struct PreferenceSetupView: View {
         VStack(spacing: 10) {
             ForEach(Array(values.enumerated()), id: \.element) { i, value in
                 PreferenceOption(
+                    emoji: Self.emoji(for: value),
                     title: value,
                     subtitle: subtitle(for: value),
-                    selected: selected == value,
-                    system: selected == value ? "checkmark.circle.fill" : "circle"
+                    selected: selected == value
                 ) { action(value) }
                 .stagger(3 + i)
             }
+        }
+    }
+
+    /// Two-column emoji tiles (big emoji over a label), like the reference's diet step.
+    private func emojiTileGrid(_ values: [String], selected: String,
+                               action: @escaping (String) -> Void) -> some View {
+        let cols = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+        return LazyVGrid(columns: cols, spacing: 12) {
+            ForEach(Array(values.enumerated()), id: \.element) { i, value in
+                let isSel = selected == value
+                Button { action(value) } label: {
+                    VStack(spacing: 8) {
+                        Text(Self.emoji(for: value)).font(.system(size: 34))
+                        Text(value)
+                            .font(nunito(14.5, .extrabold))
+                            .foregroundStyle(Color.gsFg)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 104)
+                    .background(isSel ? Color.gsPeachSoft : Color.gsCard)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(isSel ? Color.gsPeach : Color.clear, lineWidth: 2))
+                    .shadow(color: .black.opacity(isSel ? 0.08 : 0.04),
+                            radius: isSel ? 14 : 8, y: 6)
+                }
+                .buttonStyle(PressableStyle(scale: 0.96))
+                .stagger(3 + i)
+            }
+        }
+    }
+
+    /// Emoji for each option value — SF Symbols can't express food/diet variety, and the
+    /// reference leans on emoji throughout.
+    static func emoji(for value: String) -> String {
+        switch value {
+        case "Eat healthier": return "🥗"
+        case "Save time": return "⚡️"
+        case "Meal prep": return "🍱"
+        case "Try new food": return "🌍"
+        case "Anything": return "🍽️"
+        case "Vegetarian": return "🥕"
+        case "High protein": return "🍗"
+        case "Low carb": return "🥑"
+        case "Mediterranean": return "🫒"
+        case "Beginner": return "🐣"
+        case "Comfortable": return "🍳"
+        case "Confident": return "🔥"
+        case "Peanuts": return "🥜"
+        case "Dairy": return "🥛"
+        case "Shellfish": return "🦐"
+        case "Gluten": return "🌾"
+        case "Pork": return "🥓"
+        default: return "🍴"
         }
     }
 
@@ -273,31 +400,24 @@ struct PreferenceSetupView: View {
         }
     }
 
-    private var progress: some View {
-        HStack(spacing: 6) {
-            ForEach(Step.allCases.indices, id: \.self) { i in
-                Capsule()
-                    .fill(i == store.preferenceIndex ? Color.gsPeach : Color.gsFill)
-                    .frame(width: i == store.preferenceIndex ? 24 : 7, height: 7)
-            }
-        }
-    }
 }
 
 private struct PreferenceOption: View {
+    let emoji: String
     let title: String
     let subtitle: String
     let selected: Bool
-    let system: String
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: system)
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(selected ? Color.gsAccentInk : Color.gsMuted)
-                    .frame(width: 28)
+            HStack(spacing: 14) {
+                // Emoji sits in a soft tile, like the reference's activity rows.
+                Text(emoji)
+                    .font(.system(size: 22))
+                    .frame(width: 46, height: 46)
+                    .background(selected ? Color.white.opacity(0.7) : Color.gsFill)
+                    .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
@@ -311,9 +431,16 @@ private struct PreferenceOption: View {
                 }
 
                 Spacer(minLength: 0)
+
+                if selected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(Color.gsAccentInk)
+                        .transition(.scale.combined(with: .opacity))
+                }
             }
-            .padding(.horizontal, 15)
-            .frame(maxWidth: .infinity, minHeight: 66)
+            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, minHeight: 70)
             .background(selected ? Color.gsPeachSoft : Color.gsCard)
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay(

@@ -12,6 +12,32 @@ struct HomeView: View {
                 HighlightStrip()
                     .padding(.top, 16)
 
+                // Personalized to the onboarding taste profile, pulled from the catalog.
+                if !store.recommended.isEmpty {
+                    sectionHeader("Picked for your taste", count: nil, action: "More") {
+                        store.openDiscover()
+                    }
+                    .padding(.top, 20)
+
+                    Text(store.preferences.summary)
+                        .font(nunito(11.5, .bold))
+                        .foregroundStyle(Color.gsAccentInk)
+                        .padding(.top, -6)
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 14) {
+                            ForEach(store.recommended) { r in
+                                HeroCard(recipe: r)
+                                    .onTapGesture { store.openCatalogRecipe(r) }
+                            }
+                        }
+                        .padding(.horizontal, 2)
+                        .padding(.vertical, 12)
+                    }
+                    .padding(.horizontal, -2)
+                    .padding(.top, 2)
+                }
+
                 if store.recipes.isEmpty {
                     // A new account has no recipes, so an empty carousel with a "0" badge
                     // would be worse than nothing — offer the two real ways to fill it.
@@ -78,6 +104,7 @@ struct HomeView: View {
             .padding(.bottom, 116)
         }
         .background(Color.gsBg)
+        .task { await store.loadRecommendations() }
     }
 
     private var header: some View {
@@ -92,7 +119,7 @@ struct HomeView: View {
                     .foregroundStyle(Color.gsMuted)
             }
             Spacer()
-            IconButton(system: "person", badge: false) { store.go(to: .profile) }
+            IconButton(system: "person", badge: false) { store.openProfile() }
         }
     }
 

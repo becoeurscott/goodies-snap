@@ -7,6 +7,15 @@ import Foundation
 /// therefore limited by actions as well as days.
 enum Promo {
 
+    /// Master switch for the first-month intro offer.
+    ///
+    /// Kept OFF until a matching StoreKit **Introductory Offer** is configured on the
+    /// monthly products in App Store Connect — advertising "$4.99 first month" without a
+    /// real offer would charge full price and is a review/consumer-law problem. When the
+    /// promo is configured, flip this to `true` (and mirror the offer in Products.storekit)
+    /// and the ribbon, Home banner and intro pricing all light up again.
+    static let introOfferAvailable = false
+
     /// How long a new user's welcome offer stays open.
     static let welcomeWindowDays = 7
     /// Days of Pro unlocked by the trial.
@@ -55,7 +64,7 @@ extension Entitlement {
     }
 
     var welcomeOfferActive: Bool {
-        !introUsed && plan == .free && Date() < welcomeEndsAt
+        Promo.introOfferAvailable && !introUsed && plan == .free && Date() < welcomeEndsAt
     }
 
     /// "3 days left" / "6 hours left", for the countdown on the banner and paywall.

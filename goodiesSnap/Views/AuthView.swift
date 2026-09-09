@@ -75,9 +75,8 @@ struct AuthView: View {
                 }
             }
         }
-        .onChange(of: social.signedIn) { _, yes in
-            if yes { store.authenticationSucceeded() }
-        }
+        // Redirect after sign-in is driven from RootView (always mounted), so it fires
+        // reliably even as this screen is torn down.
     }
 
     private var content: some View {

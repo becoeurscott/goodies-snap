@@ -46,15 +46,14 @@ struct RootView: View {
         }
         .foregroundStyle(Color.gsFg)
         .font(nunito(14, .semibold))
-        .onChange(of: social.signedIn) { _, yes in
-            store.isAuthenticated = yes
-            // Drive the post-sign-in redirect here rather than from AuthView: RootView is
-            // always mounted, so this fires reliably even as the auth screen tears down.
-            // authenticationSucceeded() only navigates when actually on the auth flow.
-            if yes { store.authenticationSucceeded() }
-        }
+        // Sign-in state and the post-sign-in redirect are driven by SocialStore.onSignedIn
+        // (wired in App.swift) — a deterministic callback, not a fragile view onChange.
+        .onChange(of: social.signedIn) { _, yes in store.isAuthenticated = yes }
         // The token is what lets AI calls use the metered proxy instead of a local key.
-        .onChange(of: social.session?.accessToken) { _, token in store.aiToken = token }
+        .onChange(of: social.session?.accessToken) { _, token in
+            store.aiToken = token
+            store.currentUserID = social.session?.userID
+        }
         .onOpenURL { url in
             guard url.scheme == "goodiessnap" else { return }
             jump(to: url.host ?? "")
@@ -62,6 +61,7 @@ struct RootView: View {
         .onAppear {
             store.isAuthenticated = social.signedIn
             store.aiToken = social.session?.accessToken
+            store.currentUserID = social.session?.userID
             // Launch-argument navigation (`-gsScreen feed`), used by UI automation.
             if let target = UserDefaults.standard.string(forKey: "gsScreen") {
                 jump(to: target)
@@ -140,7 +140,7 @@ struct RootView: View {
         case "shopping": store.go(to: .shopping)
         case "plan": store.go(to: .plan)
         case "import": store.go(to: .importer)
-        case "profile": store.go(to: .profile)
+        case "profile": store.openProfile()
         case "discover": store.openDiscover()
         case "picker":
             store.go(to: .plan)
@@ -150,6 +150,18 @@ struct RootView: View {
             else { store.go(to: .shopping) }
         case "scan": store.startPhotoScan()
         case "paywall": store.showPaywall(.upgrade)
+        case "paywall-active":
+            // Verification hook: pretend Pro yearly was bought. Applied after a beat because
+            // `refreshEntitlements()` runs at launch and would otherwise reset us to free —
+            // StoreKit is the real source of truth for the plan.
+            store.showPaywall(.upgrade)
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(2.5))
+                store.entitlement.plan = .pro
+                store.entitlement.annualBilling = true
+                store.entitlement.used = 137
+                store.isAuthenticated = true
+            }
         case "paywall-empty":
             store.entitlement.used = store.entitlement.plan.allowance
             store.showPaywall(.outOfActions)
@@ -254,6 +266,16 @@ struct RootView: View {
                     .zIndex(56)
             }
 
+            if store.writingReview {
+                WriteReviewSheet()
+                    .zIndex(55)
+            }
+
+            if store.reportingReview != nil {
+                ReviewReportSheet()
+                    .zIndex(57)
+            }
+
             if !store.toast.isEmpty {
                 VStack {
                     Spacer()
@@ -292,6 +314,7 @@ struct RootView: View {
                 case .profile: ProfileView()
                 case .feed: FeedView()
                 case .discover: DiscoverView()
+                case .reviews: ReviewsView()
                 case .paywall: PaywallView()
                 case .auth: AuthView()
                 }
@@ -334,11 +357,14 @@ struct RootView: View {
     private var edgeBackGrabber: some View {
         if store.canGoBack {
             Color.clear
-                .frame(width: 22)
+                .frame(width: 32)
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 8)
                         .onChanged { value in
+                            // Ignore drags that are mostly vertical: on a scrolling screen the
+                            // strip would otherwise swallow the start of a normal scroll.
+                            guard abs(value.translation.width) > abs(value.translation.height) else { return }
                             backDrag = max(0, value.translation.width)
                         }
                         .onEnded { value in

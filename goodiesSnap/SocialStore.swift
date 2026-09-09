@@ -6,6 +6,10 @@ final class SocialStore: ObservableObject {
     @Published var session: SocialAPI.Session? {
         didSet { persistSession() }
     }
+    /// Called right after a successful sign-in/sign-up, on the main actor. Wired in App.swift
+    /// to drive navigation — deterministic, unlike a SwiftUI onChange on a computed property.
+    var onSignedIn: ((_ isNewAccount: Bool) -> Void)?
+
     @Published var posts: [FeedPost] = []
     @Published var likedPostIDs: Set<String> = []
     @Published var loading = false
@@ -72,30 +76,45 @@ final class SocialStore: ObservableObject {
     // MARK: - Auth
 
     func signUp(email: String, password: String, name: String) async {
-        await authFlow { try await SocialAPI.signUp(email: email, password: password, name: name) }
+        await authFlow(isSignUp: true) { try await SocialAPI.signUp(email: email, password: password, name: name) }
     }
 
     func signIn(email: String, password: String) async {
-        await authFlow { try await SocialAPI.signIn(email: email, password: password) }
+        await authFlow(isSignUp: false) { try await SocialAPI.signIn(email: email, password: password) }
     }
 
-    private func authFlow(_ work: () async throws -> SocialAPI.Session) async {
+    private func authFlow(isSignUp: Bool, _ work: () async throws -> SocialAPI.Session) async {
         busy = true
         errorMessage = ""
         do {
             let s = try await work()
-            NSLog("[gs-auth] work succeeded, setting session for %@", s.userID)
             withAnimation(AppStore.sheetAnimation) { session = s }
-            NSLog("[gs-auth] session set, signedIn=%d", signedIn ? 1 : 0)
             Haptics.notify(.success)
+            // Fire the redirect immediately and deterministically, before the (slower)
+            // feed refresh — the user shouldn't wait on posts loading to leave this screen.
+            onSignedIn?(isSignUp)
             await refresh()
-            NSLog("[gs-auth] refresh done")
         } catch {
-            NSLog("[gs-auth] THREW: %@", error.localizedDescription)
             errorMessage = error.localizedDescription
             Haptics.notify(.error)
         }
         busy = false
+    }
+
+    /// Called at launch: confirm a persisted session still belongs to a real, current
+    /// account and sign out if not, so a deleted or expired login never appears active.
+    /// A transient network error is ignored — we only sign out on a definite invalid session.
+    func validateSession() async {
+        guard let current = session else { return }
+        do {
+            let exists = try await SocialAPI.accountExists(session: current)
+            if !exists { signOut() }               // account was deleted
+        } catch SocialAPI.SocialError.sessionExpired {
+            // Try one refresh; if even that fails, the session is dead.
+            if (try? await SocialAPI.refresh(session: current)) == nil { signOut() }
+        } catch {
+            // Network/transient error — keep the session, don't sign the user out.
+        }
     }
 
     func signOut() {

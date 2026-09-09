@@ -239,9 +239,20 @@ struct ScanIdentifyView: View {
         .onChange(of: pickedPhoto) { _, item in
             guard let item else { return }
             Task {
-                let data = try? await item.loadTransferable(type: Data.self)
-                pickedPhoto = nil
-                store.scan(image: data.flatMap(UIImage.init(data:)))
+                defer { pickedPhoto = nil }
+                // Loading an iCloud-optimized photo can throw or return nil. Surface that
+                // instead of silently doing nothing — the old code swallowed both with
+                // `try?`, so a photo that failed to load looked like the scan was ignored.
+                do {
+                    guard let data = try await item.loadTransferable(type: Data.self),
+                          let image = UIImage(data: data) else {
+                        store.showToast("Couldn't load that photo — try another")
+                        return
+                    }
+                    store.scan(image: image)
+                } catch {
+                    store.showToast("Couldn't load that photo — try another")
+                }
             }
         }
     }
@@ -958,35 +969,172 @@ struct ScanCorners: Shape {
 
 // MARK: - Analyzing overlay
 
+/// Shown while the AI extracts a recipe. Rather than a static spinner, it stages a little
+/// story: a stylized recipe card whose lines "fill in" as a glowing scan bar sweeps down
+/// it, the brand mark pulsing in a ring above, and a caption that cycles through the real
+/// phases of extraction. Honours Reduce Motion by falling back to a calm fade.
 struct AnalyzingOverlay: View {
-    @State private var pulse = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var scan = false          // scan-bar sweep position (0…1)
+    @State private var filled = 0            // how many card lines have "read in"
+    @State private var caption = 0           // index into `captions`
+    @State private var ringSpin = false
+    @State private var markPulse = false
+
+    private let captions = [
+        "Reading your recipe…",
+        "Finding the ingredients…",
+        "Extracting the steps…",
+        "Estimating nutrition…",
+    ]
+    /// Relative widths of the skeleton lines, so the card reads like a real recipe.
+    private let lineWidths: [CGFloat] = [1.0, 0.82, 0.66, 0.9, 0.55, 0.74]
+    private let cardW: CGFloat = 230
+    private let cardH: CGFloat = 264
 
     var body: some View {
         ZStack {
-            Color.gsBg.opacity(0.9).ignoresSafeArea()
+            Color.gsBg.opacity(0.92).ignoresSafeArea()
                 .background(.ultraThinMaterial)
 
-            VStack(spacing: 0) {
-                ZStack {
-                    Circle()
-                        .fill(Color.fg(0.1))
-                        .overlay(Circle().strokeBorder(Color.fg(0.2), lineWidth: 1))
-                        .frame(width: 64, height: 64)
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 24, weight: .light))
+            VStack(spacing: 26) {
+                mark
+                card
+                VStack(spacing: 6) {
+                    Text(captions[caption])
+                        .font(nunito(20, .black))
+                        .contentTransition(.opacity)
+                        .id(caption)
+                        .transition(.opacity)
+                    Text("This usually takes a few seconds")
+                        .font(nunito(12, .semibold))
+                        .foregroundStyle(Color.gsMuted)
                 }
-                .padding(.bottom, 16)
-                Text("Reading your recipe…")
-                    .font(nunito(22, .extrabold))
-                Text("Extracting ingredients, steps & nutrition")
-                    .font(nunito(12.5, .semibold))
-                    .foregroundStyle(Color.fg(0.5))
-                    .padding(.top, 6)
+                .animation(.easeInOut(duration: 0.35), value: caption)
             }
-            .opacity(pulse ? 1 : 0.4)
-            .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: pulse)
         }
-        .onAppear { pulse = true }
+        .onAppear(perform: start)
+    }
+
+    // The brand mark inside a rotating gradient ring.
+    private var mark: some View {
+        ZStack {
+            Circle()
+                .trim(from: 0, to: 0.7)
+                .stroke(
+                    AngularGradient(colors: [.gsPeach, .gsPeach.opacity(0.15), .gsPeach],
+                                    center: .center),
+                    style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                .frame(width: 68, height: 68)
+                .rotationEffect(.degrees(ringSpin ? 360 : 0))
+
+            Image("SplashLogo")
+                .resizable().interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 46, height: 46)
+                .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                .scaleEffect(markPulse ? 1.06 : 0.94)
+        }
+    }
+
+    // The recipe card being "read": a header block, a photo placeholder, then text lines
+    // that appear one by one, with a scan bar gliding over the whole thing.
+    private var card: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.gsFg.opacity(0.14))
+                .frame(width: cardW * 0.6, height: 15)
+                .lineReveal(index: 0, filled: filled)
+
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.gsFill)
+                .frame(height: 74)
+                .overlay(
+                    Image(systemName: "photo")
+                        .font(.system(size: 22, weight: .light))
+                        .foregroundStyle(Color.gsMuted.opacity(0.6))
+                )
+                .lineReveal(index: 1, filled: filled)
+
+            ForEach(Array(lineWidths.enumerated()), id: \.offset) { i, w in
+                Capsule()
+                    .fill(Color.gsFg.opacity(0.11))
+                    .frame(width: cardW * w, height: 9)
+                    .lineReveal(index: i + 2, filled: filled)
+            }
+        }
+        .padding(18)
+        .frame(width: cardW + 36, alignment: .leading)
+        .background(Color.gsCard)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
+            .strokeBorder(Color.gsFg.opacity(0.06), lineWidth: 1))
+        .shadow(color: .black.opacity(0.08), radius: 22, y: 12)
+        .overlay(scanBar)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    // A soft peach glow bar sweeping top→bottom, the "reading" beam.
+    private var scanBar: some View {
+        GeometryReader { geo in
+            let h = geo.size.height
+            LinearGradient(
+                colors: [.clear, .gsPeach.opacity(0.0), .gsPeach.opacity(0.35), .gsPeach.opacity(0.0), .clear],
+                startPoint: .top, endPoint: .bottom)
+                .frame(height: 90)
+                .offset(y: scan ? h : -90)
+                .allowsHitTesting(false)
+                .opacity(reduceMotion ? 0 : 1)
+        }
+    }
+
+    private func start() {
+        guard !reduceMotion else {
+            // Calm fallback: just reveal everything and cycle captions.
+            filled = lineWidths.count + 2
+            markPulse = true
+            cycleCaptions()
+            return
+        }
+        withAnimation(.linear(duration: 2.6).repeatForever(autoreverses: false)) { ringSpin = true }
+        withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { markPulse = true }
+        withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: false)) { scan = true }
+
+        // Reveal the card lines in sequence, looping so it keeps feeling alive on long calls.
+        Task { @MainActor in
+            let total = lineWidths.count + 2
+            while !Task.isCancelled {
+                for i in 1...total {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { filled = i }
+                    try? await Task.sleep(for: .milliseconds(220))
+                }
+                try? await Task.sleep(for: .milliseconds(500))
+                filled = 0
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+        cycleCaptions()
+    }
+
+    private func cycleCaptions() {
+        Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(1600))
+                withAnimation { caption = (caption + 1) % captions.count }
+            }
+        }
+    }
+}
+
+/// Fades + rises each card line into place as the reveal index passes it.
+private extension View {
+    func lineReveal(index: Int, filled: Int) -> some View {
+        let shown = index < filled
+        return self
+            .opacity(shown ? 1 : 0)
+            .offset(y: shown ? 0 : 6)
+            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: filled)
     }
 }
 

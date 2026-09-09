@@ -5,6 +5,7 @@ struct ProfileView: View {
     @EnvironmentObject var social: SocialStore
     @FocusState private var nameFocused: Bool
     @State private var confirmReset = false
+    @State private var confirmDisconnect = false
     @State private var confirmDelete = false
     @State private var deleteConfirmation = ""
     @State private var deleteFailed = ""
@@ -24,6 +25,8 @@ struct ProfileView: View {
                     .padding(.top, 28)
                 accountSection
                     .padding(.top, 28)
+                legalSection
+                    .padding(.top, 28)
 
                 Text("goodiesSnap 1.0 — every recipe, beautifully kept.")
                     .font(nunito(11.5, .semibold))
@@ -33,7 +36,8 @@ struct ProfileView: View {
             }
             .padding(.horizontal, 22)
             .padding(.top, 16)
-            .padding(.bottom, 116)
+            // No dock on this screen, so the old 116pt reserve would just be dead space.
+            .padding(.bottom, 44)
         }
         .scrollDismissesKeyboard(.interactively)
         .task { await social.loadBlocked() }
@@ -47,6 +51,12 @@ struct ProfileView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Your saved recipes, shopping list, and meal plan go back to the starter samples.")
+        }
+        .alert("Disconnect?", isPresented: $confirmDisconnect) {
+            Button("Disconnect", role: .destructive) { social.signOut() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("You'll be signed out on this iPhone. Your account and everything in it stays exactly as it is — sign back in any time.")
         }
         .sheet(isPresented: $confirmDelete) { deleteAccountSheet }
     }
@@ -87,6 +97,47 @@ struct ProfileView: View {
                     .glassCard(radius: 20, fill: 0.05, stroke: 0.1)
                 }
 
+                // Signing out is the everyday action, so it lives here. Deleting the
+                // account is permanent and belongs down in Privacy & legal, away from it.
+                Button { confirmDisconnect = true } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "rectangle.portrait.and.arrow.right")
+                            .font(.system(size: 14, weight: .bold))
+                        Text("Disconnect")
+                            .font(nunito(14, .extrabold))
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 52)
+                    .background(Color.fg(0.06))
+                    .clipShape(Capsule())
+                    .overlay(Capsule().strokeBorder(Color.fg(0.16), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            } else {
+                Text("Sign in from the Community tab to manage your account.")
+                    .font(nunito(12.5, .semibold))
+                    .foregroundStyle(Color.fg(0.45))
+            }
+        }
+    }
+
+    // MARK: - Privacy & legal
+
+    /// Terms, Privacy Policy and — App Store guideline 5.1.1(v) — in-app account deletion.
+    private var legalSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Privacy & legal")
+                .font(nunito(19, .extrabold))
+
+            VStack(spacing: 0) {
+                legalRow(icon: "doc.text", title: "Terms of Use", url: Legal.terms)
+                legalRow(icon: "hand.raised", title: "Privacy Policy", url: Legal.privacy)
+                legalRow(icon: "envelope", title: "Contact support", url: Legal.support, isLast: true)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 4)
+            .glassCard(radius: 20, fill: 0.05, stroke: 0.1)
+
+            if social.signedIn {
                 Button {
                     deleteConfirmation = ""
                     deleteFailed = ""
@@ -101,10 +152,37 @@ struct ProfileView: View {
                         .overlay(Capsule().strokeBorder(Color.red.opacity(0.3), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
-            } else {
-                Text("Sign in from the Community tab to manage your account.")
-                    .font(nunito(12.5, .semibold))
+                .padding(.top, 4)
+
+                Text("Permanent. Deletes your account and everything you posted.")
+                    .font(nunito(11.5, .semibold))
                     .foregroundStyle(Color.fg(0.45))
+                    .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    private func legalRow(icon: String, title: String, url: URL, isLast: Bool = false) -> some View {
+        Link(destination: url) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Color.fg(0.55))
+                    .frame(width: 20)
+                Text(title)
+                    .font(nunito(13.5, .bold))
+                    .foregroundStyle(Color.gsFg)
+                Spacer()
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.fg(0.4))
+            }
+            .frame(minHeight: 48)
+            .contentShape(Rectangle())
+            .overlay(alignment: .bottom) {
+                if !isLast {
+                    Rectangle().fill(Color.fg(0.07)).frame(height: 1)
+                }
             }
         }
     }

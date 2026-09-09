@@ -30,10 +30,34 @@ struct Recipe: Codable, Hashable, Identifiable {
     var ingredients: [Ingredient]
     var steps: [String]
     var notes: String
+    /// YouTube video id when this recipe was imported from a YouTube link, so the detail
+    /// screen can embed the video and play it in-app. Optional with a default keeps older
+    /// persisted recipes decodable.
+    var videoID: String? = nil
+    /// Start time in seconds within the video for each method step, aligned to `steps` by
+    /// index; a value < 0 means "no known moment for this step". Empty/nil when the source
+    /// video had no usable chapter timings. Lets each step jump the player to that moment.
+    var stepSeconds: [Int]? = nil
 
     var totalMinutes: Int { prep + cook }
     var meta: String { "\(totalMinutes) min · \(cal) cal · \(cuisine)" }
     var imageURL: URL? { URL(string: img) }
+
+    var hasVideo: Bool { !(videoID ?? "").isEmpty }
+
+    /// Video timestamp for the method step at `index`, or nil when there isn't one.
+    func stepStart(at index: Int) -> Int? {
+        guard hasVideo, let stepSeconds, index < stepSeconds.count else { return nil }
+        let s = stepSeconds[index]
+        return s >= 0 ? s : nil
+    }
+}
+
+/// mm:ss (or h:mm:ss) label for a video timestamp.
+func timeLabel(_ seconds: Int) -> String {
+    let s = max(0, seconds)
+    let h = s / 3600, m = (s % 3600) / 60, sec = s % 60
+    return h > 0 ? String(format: "%d:%02d:%02d", h, m, sec) : String(format: "%d:%02d", m, sec)
 }
 
 struct ShoppingItem: Codable, Hashable, Identifiable {

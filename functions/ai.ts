@@ -27,13 +27,16 @@ metric-friendly home-cook units. Each ingredient gets the single best supermarke
 category. Steps are clear, one action each, no life stories. Estimate calories and macros \
 per serving honestly. cuisine is a short label like "Italian", "Thai", "West African", or \
 "Breakfast". If the content contains no plausible recipe at all, use the title "Not a recipe" \
-and leave ingredients and steps empty.`;
+and leave ingredients and steps empty. When the content is a YouTube cooking video whose \
+description or chapters contain timestamps, fill step_seconds with the start time in whole \
+seconds for each step, aligned to steps by index (use -1 for any step you cannot place). If \
+there are no timestamps, return an empty step_seconds array.`;
 
 const RECIPE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: ['title', 'cuisine', 'prep_minutes', 'cook_minutes', 'servings',
-             'calories_per_serving', 'protein_g', 'carbs_g', 'fat_g', 'ingredients', 'steps', 'notes'],
+             'calories_per_serving', 'protein_g', 'carbs_g', 'fat_g', 'ingredients', 'steps', 'step_seconds', 'notes'],
   properties: {
     title: { type: 'string' },
     cuisine: { type: 'string' },
@@ -58,6 +61,7 @@ const RECIPE_SCHEMA = {
       },
     },
     steps: { type: 'array', items: { type: 'string' } },
+    step_seconds: { type: 'array', items: { type: 'integer' } },
     notes: { type: 'string' },
   },
 };

@@ -5,7 +5,7 @@ import UIKit
 @MainActor
 final class AppStore: ObservableObject {
     enum Phase { case splash, onboard, preferences, createAccount, preparing, app }
-    enum Screen { case home, importer, scanIdentify, scanResults, library, detail, cook, shopping, basket, plan, profile, feed, discover, paywall, auth }
+    enum Screen { case home, importer, scanIdentify, scanResults, library, detail, cook, shopping, basket, plan, profile, feed, discover, reviews, paywall, auth }
 
     /// Which way the next screen change should animate.
     enum NavDirection { case forward, backward, lateral }
@@ -15,7 +15,7 @@ final class AppStore: ObservableObject {
         switch screen {
         // Meal plan is a tab root now, so it sits at depth 0 with the other tabs.
         case .home, .importer, .library, .shopping, .plan: return 0
-        case .scanIdentify, .scanResults, .detail, .profile, .feed, .discover, .basket: return 1
+        case .scanIdentify, .scanResults, .detail, .profile, .feed, .discover, .basket, .reviews: return 1
         case .cook, .paywall, .auth: return 2
         }
     }
@@ -36,10 +36,43 @@ final class AppStore: ObservableObject {
 
     // MARK: Discover (server recipe catalog)
     @Published var catalog: [Recipe] = []
+    /// The community's most-liked recipes, for the "Popular right now" carousel. Stays empty
+    /// until people share recipes; the view falls back to featured catalog dishes.
+    @Published var popular: [Recipe] = []
     @Published var catalogCuisines: [String] = []
     @Published var catalogCuisine: String? = nil
     @Published var catalogSearch = ""
     @Published var catalogLoading = false
+
+    /// Recipes recommended from the catalog for the user's taste profile, shown on Home.
+    @Published var recommended: [Recipe] = []
+    @Published var recommendedLoading = false
+
+    // MARK: Reviews (recipe ratings)
+    @Published var reviews: [RecipeReview] = []
+    @Published var reviewsLoading = false
+    /// The recipe key the loaded reviews belong to, so we don't show stale reviews.
+    @Published var reviewsRecipeKey: String?
+    @Published var writingReview = false
+    /// Rating filter on the "all reviews" screen (nil = all stars).
+    @Published var reviewFilter: Int? = nil
+    /// A review being reported, driving the report sheet on the reviews screen.
+    @Published var reportingReview: RecipeReview?
+
+    var myReview: RecipeReview? { reviews.first { $0.user_id == currentUserID } }
+    var reviewCount: Int { reviews.count }
+    var averageRating: Double {
+        guard !reviews.isEmpty else { return 0 }
+        return Double(reviews.reduce(0) { $0 + $1.rating }) / Double(reviews.count)
+    }
+    var filteredReviews: [RecipeReview] {
+        guard let f = reviewFilter else { return reviews }
+        return reviews.filter { $0.rating == f }
+    }
+    /// Count of reviews at each star level, for the filter chips (index 0 = 1★ … 4 = 5★).
+    var ratingBuckets: [Int] {
+        (1...5).map { star in reviews.filter { $0.rating == star }.count }
+    }
     /// Ids already saved to the library, so Discover can show a "Saved ✓" state.
     var isInLibrary: (String) -> Bool { { [weak self] id in self?.recipes.contains { $0.id == id } ?? false } }
     @Published var search = ""
@@ -71,6 +104,9 @@ final class AppStore: ObservableObject {
     /// Access token for the signed-in InsForge user, mirrored from `SocialStore` by `RootView`.
     /// Its presence is what lets AI calls use the metered server proxy.
     @Published var aiToken: String?
+    /// The signed-in user's id, mirrored from SocialStore by RootView — lets the app tell
+    /// which review is the current user's own.
+    @Published var currentUserID: String?
 
     /// True when AI work can run server-side, where the key lives and the quota is enforced.
     var usesServerAI: Bool { aiToken != nil }
@@ -175,6 +211,16 @@ final class AppStore: ObservableObject {
         reportAIFailure(error)
     }
 
+    /// Profile is an account screen — signed out there is nothing in it but blanks, so
+    /// ask for an account instead of showing an empty shell.
+    func openProfile() {
+        guard isAuthenticated else {
+            showAuth(.general)
+            return
+        }
+        go(to: .profile)
+    }
+
     /// Sends the user to create an account (or sign in) before a gated feature.
     func showAuth(_ reason: AuthReason = .general) {
         guard screen != .auth else { return }
@@ -184,14 +230,19 @@ final class AppStore: ObservableObject {
     }
 
     /// Called when a session appears, so the user lands back where they were headed.
-    func authenticationSucceeded() {
-        NSLog("[gs-auth] authenticationSucceeded phase=%@ screen=%@", "\(phase)", "\(screen)")
+    /// Drives the welcome screen's copy: a new account gets "Welcome, [name]!" with the
+    /// setup steps; a returning sign-in gets a shorter "Welcome back, [name]!". nil when no
+    /// welcome is playing (e.g. a silent session restore at launch).
+    enum WelcomeMode { case newAccount, returning }
+    @Published var welcome: WelcomeMode?
+
+    /// Called after an explicit sign-in/sign-up succeeds (never on silent session restore).
+    /// Both paths play the welcome animation, then land on Home.
+    func authenticationSucceeded(newAccount: Bool = false) {
         isAuthenticated = true
-        if phase == .createAccount {
-            enterApp()
-        } else if screen == .auth {
-            goBack()
-        }
+        welcome = newAccount ? .newAccount : .returning
+        screen = .home                     // land on Home after the welcome, never back on auth
+        withAnimation(.easeOut(duration: 0.4)) { phase = .preparing }
     }
 
     func showPaywall(_ reason: PaywallReason = .upgrade) {
@@ -222,10 +273,11 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func activate(_ plan: Entitlement.Plan) {
+    func activate(_ plan: Entitlement.Plan, annual: Bool = false) {
         Haptics.notify(.success)
         let tookWelcome = entitlement.welcomeOfferActive
         entitlement.plan = plan
+        entitlement.annualBilling = annual
         entitlement.period = Entitlement.currentPeriod
         entitlement.used = 0
         entitlement.trialUntil = nil
@@ -331,9 +383,13 @@ final class AppStore: ObservableObject {
 
     // MARK: - Launch flow
 
+    /// How long the splash holds. Shared with SplashView so the loading arc finishes exactly
+    /// as the screen hands off — a bar that stops at 70% reads as a hang.
+    static let splashDuration: Double = 2.4
+
     func startSplashTimer() {
         splashTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(2.2))
+            try? await Task.sleep(for: .seconds(Self.splashDuration))
             guard let self, !Task.isCancelled, self.phase == .splash else { return }
             withAnimation(.easeOut(duration: 0.4)) { self.phase = .onboard }
         }
@@ -380,6 +436,7 @@ final class AppStore: ObservableObject {
     func finishPreparing() {
         Haptics.notify(.success)
         withAnimation(.easeOut(duration: 0.45)) { phase = .app }
+        welcome = nil
     }
 
     func skipOnboard() {
@@ -402,6 +459,7 @@ final class AppStore: ObservableObject {
             PreferenceSound.success()
             Haptics.notify(.success)
             persist()
+            Task { await loadRecommendations(force: true) }
             askForAccount()
         } else {
             preferenceForward = true
@@ -438,6 +496,7 @@ final class AppStore: ObservableObject {
         case .profile, .feed: return .home
         case .basket: return .shopping
         case .discover: return .library
+        case .reviews: return detailReturn
         case .paywall: return Self.depth(of: paywallReturn) == 0 ? paywallReturn : .importer
         case .auth: return Self.depth(of: authReturn) == 0 ? authReturn : .home
         default: return screen
@@ -452,6 +511,7 @@ final class AppStore: ObservableObject {
         case .scanResults: return .scanIdentify
         case .scanIdentify: return .importer
         case .basket: return .shopping
+        case .reviews: return .detail
         case .profile, .feed: return .home
         case .paywall: return paywallReturn
         case .auth: return authReturn
@@ -506,7 +566,10 @@ final class AppStore: ObservableObject {
     var selected: Recipe? { recipes.first { $0.id == selId } ?? recipes.first }
 
     var showTabs: Bool {
-        phase == .app && screen != .cook && screen != .scanIdentify && screen != .paywall && screen != .auth
+        // Profile is account settings, not a tab destination — the dock is hidden there and
+        // you leave by the back chevron or the edge swipe, like cook mode and the paywall.
+        phase == .app && screen != .cook && screen != .scanIdentify && screen != .paywall
+            && screen != .auth && screen != .profile
     }
 
     var undoneCount: Int { shopping.filter { !$0.done }.count }
@@ -776,11 +839,36 @@ final class AppStore: ObservableObject {
 
     // MARK: - Discover
 
+    /// Loads taste-profile recommendations for the dashboard. Silent on failure — the Home
+    /// section just stays hidden rather than showing an error.
+    @MainActor
+    func loadRecommendations(force: Bool = false) async {
+        guard preferences.isComplete else { recommended = []; return }
+        guard force || recommended.isEmpty, !recommendedLoading else { return }
+        recommendedLoading = true
+        defer { recommendedLoading = false }
+        if let rows = try? await CatalogService.recommended(for: preferences) {
+            recommended = rows.map(\.recipe)
+        }
+    }
+
+    /// Discover now lives inside the Library ("Recipes") tab, which opens on its Discover
+    /// segment. Routing here keeps a single home for the catalog instead of a separate screen.
     func openDiscover() {
-        go(to: .discover)
+        go(to: .library)
         if catalog.isEmpty { Task { await loadCatalog(reset: true) } }
         if catalogCuisines.isEmpty {
             Task { catalogCuisines = (try? await CatalogService.cuisines()) ?? [] }
+        }
+    }
+
+    /// Loads the community's most-cooked recipes. Best-effort: needs a signed-in token, and
+    /// silently leaves `popular` empty (view falls back to the catalog) when unavailable.
+    @MainActor
+    func loadPopular() async {
+        guard let token = aiToken else { return }
+        if let recipes = try? await SocialAPI.popularRecipes(token: token), !recipes.isEmpty {
+            popular = recipes
         }
     }
 
@@ -812,6 +900,89 @@ final class AppStore: ObservableObject {
 
     /// Opens a catalog recipe in the normal detail screen. It is added to the library on
     /// first view so cook mode, favouriting and the shopping list all work on it.
+    // MARK: - Reviews
+
+    /// Loads reviews for the given recipe if not already loaded for it.
+    @MainActor
+    func loadReviews(for recipe: Recipe, force: Bool = false) async {
+        if !force, reviewsRecipeKey == recipe.id, !reviews.isEmpty { return }
+        guard !reviewsLoading else { return }
+        reviewsLoading = true
+        defer { reviewsLoading = false }
+        reviewsRecipeKey = recipe.id
+        if let rows = try? await ReviewService.reviews(recipeKey: recipe.id) {
+            // Guard against a slow response arriving after the user moved on.
+            if reviewsRecipeKey == recipe.id { reviews = rows }
+        }
+    }
+
+    /// Opens the "all reviews" screen for the current recipe.
+    func openReviews() {
+        reviewFilter = nil
+        go(to: .reviews)
+        if let sel = selected { Task { await loadReviews(for: sel) } }
+    }
+
+    /// Opens the write/edit-review sheet, gated behind having an account.
+    func startReview() {
+        guard isAuthenticated, aiToken != nil else { showAuth(.aiFeature); return }
+        writingReview = true
+    }
+
+    func setReviewFilter(_ star: Int?) {
+        withAnimation(Self.lateralAnimation) { reviewFilter = (reviewFilter == star) ? nil : star }
+    }
+
+    /// Posts or updates the current user's review of the open recipe.
+    func submitReview(rating: Int, body: String) async {
+        guard let sel = selected, let token = aiToken, let uid = currentUserID else {
+            showAuth(.aiFeature); return
+        }
+        do {
+            _ = try await ReviewService.submit(
+                recipeKey: sel.id, title: sel.title, rating: rating, body: body,
+                token: token, userID: uid, existingID: myReview?.id)
+            writingReview = false
+            Haptics.notify(.success)
+            await loadReviews(for: sel, force: true)
+            showToast("Thanks for your review")
+        } catch {
+            Haptics.notify(.error)
+            showToast("Couldn't save your review")
+        }
+    }
+
+    func deleteMyReview() async {
+        guard let sel = selected, let token = aiToken, let mine = myReview else { return }
+        do {
+            try await ReviewService.delete(id: mine.id, token: token)
+            await loadReviews(for: sel, force: true)
+            showToast("Review removed")
+        } catch {
+            showToast("Couldn't remove your review")
+        }
+    }
+
+    func startReviewReport(_ review: RecipeReview) {
+        Haptics.tap(.medium)
+        reportingReview = review
+    }
+
+    func submitReviewReport(reason: SocialAPI.ReportReason, note: String) async {
+        guard let review = reportingReview, let token = aiToken, let uid = currentUserID else { return }
+        do {
+            try await ReviewService.report(id: review.id, reason: reason, note: note, token: token, userID: uid)
+            // Drop it locally right away so the reporter stops seeing it.
+            withAnimation(Self.pushAnimation) { reviews.removeAll { $0.id == review.id } }
+            Haptics.notify(.success)
+            showToast("Thanks — our team reviews reports within 24 hours.")
+        } catch {
+            Haptics.notify(.error)
+            showToast("Couldn't send the report")
+        }
+        reportingReview = nil
+    }
+
     func openCatalogRecipe(_ recipe: Recipe) {
         if !recipes.contains(where: { $0.id == recipe.id }) {
             recipes.insert(recipe, at: 0)
@@ -882,15 +1053,19 @@ final class AppStore: ObservableObject {
         persist()
     }
 
-    func addItem() {
+    /// Adds the typed item to the list. Returns whether anything was actually added, so the
+    /// UI can play its "added" confirmation only on a real add (not on an empty submit).
+    @discardableResult
+    func addItem() -> Bool {
         let n = newItem.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !n.isEmpty else { return }
+        guard !n.isEmpty else { return false }
         Haptics.tap(.light)
         withAnimation(Self.pushAnimation) {
             shopping.append(ShoppingItem(id: "s" + String(UUID().uuidString.prefix(6)), name: n, qty: "", category: "Other", done: false))
         }
         newItem = ""
         persist()
+        return true
     }
 
     // MARK: - Meal plan

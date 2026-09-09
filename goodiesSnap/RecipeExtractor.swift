@@ -101,10 +101,12 @@ enum RecipeExtractor {
         // 20k chars covers any real recipe page. The cap matters commercially, not just
         // technically: links are the priciest action, and uncapped page text is what pushes
         // a heavy annual subscriber past break-even.
-        return try await callRecipe(
+        var recipe = try await callRecipe(
             parts: [.text(String(content.prefix(20_000)))],
             apiKey: apiKey, sourceLabel: sourceLabel, imageURL: imageURL
         )
+        recipe.videoID = youTubeID(from: trimmed)
+        return recipe
     }
 
     /// Identify a dish from a photo and generate its recipe (vision).
@@ -170,7 +172,11 @@ enum RecipeExtractor {
     Each ingredient gets the single best supermarket-aisle category. Steps are clear, one action \
     each, no life stories. Estimate calories and macros per serving honestly. cuisine is a short \
     label like "Italian", "Thai", "West African", or "Breakfast". If the content contains no \
-    plausible recipe at all, use the title "Not a recipe" and leave ingredients and steps empty.
+    plausible recipe at all, use the title "Not a recipe" and leave ingredients and steps empty. \
+    When the content is a YouTube cooking video whose description or chapters contain timestamps, \
+    fill step_seconds with the start time in whole seconds for each step, aligned to steps by \
+    index (use -1 for any step you cannot place). If there are no timestamps, return an empty \
+    step_seconds array.
     """
 
     private static let schema: [String: Any] = [
@@ -178,7 +184,7 @@ enum RecipeExtractor {
         "additionalProperties": false,
         "required": ["title", "cuisine", "prep_minutes", "cook_minutes", "servings",
                      "calories_per_serving", "protein_g", "carbs_g", "fat_g",
-                     "ingredients", "steps", "notes"],
+                     "ingredients", "steps", "step_seconds", "notes"],
         "properties": [
             "title": ["type": "string"],
             "cuisine": ["type": "string"],
@@ -203,6 +209,7 @@ enum RecipeExtractor {
                 ],
             ],
             "steps": ["type": "array", "items": ["type": "string"]],
+            "step_seconds": ["type": "array", "items": ["type": "integer"]],
             "notes": ["type": "string"],
         ],
     ]
@@ -219,6 +226,7 @@ enum RecipeExtractor {
         let fat_g: Int
         let ingredients: [ExtractedIngredient]
         let steps: [String]
+        let step_seconds: [Int]?
         let notes: String
     }
 
@@ -462,7 +470,8 @@ enum RecipeExtractor {
                 Ingredient(name: $0.name, qty: $0.qty, category: Aisle.order.contains($0.category) ? $0.category : "Other")
             },
             steps: extracted.steps,
-            notes: extracted.notes
+            notes: extracted.notes,
+            stepSeconds: (extracted.step_seconds?.isEmpty ?? true) ? nil : extracted.step_seconds
         )
     }
 
@@ -591,8 +600,10 @@ enum RecipeExtractor {
             body: ["action": "extract", "content": String(content.prefix(20_000))],
             token: token
         )
+        var built = try recipe(from: result.value, sourceLabel: sourceLabel, imageURL: imageURL)
+        built.videoID = youTubeID(from: trimmed)
         return ProxyResult(
-            value: try recipe(from: result.value, sourceLabel: sourceLabel, imageURL: imageURL),
+            value: built,
             remaining: result.remaining, plan: result.plan
         )
     }
@@ -672,7 +683,29 @@ enum RecipeExtractor {
                 parts.append("\(name): \(c)")
             }
         }
+        // The truncated og:description omits the chapter list; the full description (which
+        // carries the "0:00 Step" timestamps we align steps to) lives in the watch page's
+        // embedded player JSON as "shortDescription".
+        if let full = youTubeFullDescription(html) {
+            parts.append("Full description (may include timestamps):\n\(full)")
+        }
         return parts.joined(separator: "\n")
+    }
+
+    /// Pull the un-truncated video description out of the YouTube watch page's embedded JSON.
+    private static func youTubeFullDescription(_ html: String) -> String? {
+        guard let range = html.range(of: #""shortDescription":"((?:[^"\\]|\\.)*)""#,
+                                     options: .regularExpression) else { return nil }
+        var raw = String(html[range])
+        raw = raw.replacingOccurrences(of: #""shortDescription":""#, with: "")
+        if raw.hasSuffix("\"") { raw.removeLast() }
+        // JSON-unescape the parts that matter for reading timestamps.
+        let unescaped = raw
+            .replacingOccurrences(of: "\\n", with: "\n")
+            .replacingOccurrences(of: "\\\"", with: "\"")
+            .replacingOccurrences(of: "\\/", with: "/")
+            .replacingOccurrences(of: "\\u0026", with: "&")
+        return String(unescaped.prefix(4_000))
     }
 
     private static func ogImage(of html: String) -> String? {

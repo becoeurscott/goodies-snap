@@ -99,6 +99,9 @@ struct Entitlement: Codable, Equatable {
     var installedAt: Date = Date()
     /// End of the Pro trial, if one was started.
     var trialUntil: Date?
+    /// True when the active plan was bought on the yearly price, so the paywall can mark
+    /// the right card as the current one.
+    var annualBilling: Bool = false
     /// Set once an intro-priced month has been taken, so it can't be reused.
     var introUsed: Bool = false
     /// Promo codes already redeemed, so each only counts once.
@@ -156,6 +159,25 @@ struct Entitlement: Codable, Equatable {
     }
 
     var renewalLabel: String { "Refreshes at the start of each month" }
+
+    /// The allowance resets on the first of the month — `rollOverIfNeeded()` keys off the
+    /// "yyyy-MM" period, so the next reset is the start of the next calendar month.
+    var renewsAt: Date {
+        let cal = Calendar.current
+        let start = cal.date(from: cal.dateComponents([.year, .month], from: Date())) ?? Date()
+        return cal.date(byAdding: .month, value: 1, to: start) ?? start
+    }
+
+    /// Countdown to that reset, for the current plan's card.
+    var renewalCountdown: String {
+        let seconds = renewsAt.timeIntervalSinceNow
+        guard seconds > 0 else { return "Renewing now" }
+        let hours = Int(seconds / 3600)
+        if hours >= 48 { return "Renews in \(hours / 24) days" }
+        if hours >= 24 { return "Renews tomorrow" }
+        if hours >= 1 { return "Renews in \(hours) hour\(hours == 1 ? "" : "s")" }
+        return "Renews within the hour"
+    }
 }
 
 /// Why the paywall was shown — lets the screen lead with the right message.
@@ -193,6 +215,7 @@ enum AuthReason: Equatable {
     case aiFeature
     case scan
     case community
+    case upgrade
 
     var title: String {
         switch self {
@@ -200,6 +223,7 @@ enum AuthReason: Equatable {
         case .aiFeature: return "Create an account to use AI"
         case .scan:      return "Create an account to scan dishes"
         case .community: return "Join the community"
+        case .upgrade:   return "Create an account to subscribe"
         }
     }
 
@@ -213,6 +237,8 @@ enum AuthReason: Equatable {
             return "Scanning a dish is tied to your account. Create one to start — it takes a moment."
         case .community:
             return "Share dishes, ask questions, cook with other people."
+        case .upgrade:
+            return "A plan belongs to your account, not this phone — so it follows you to a new device and survives a reinstall."
         }
     }
 }

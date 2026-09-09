@@ -49,6 +49,8 @@ extension Color {
     /// white it is unreadable as text. For accent text on light surfaces use `gsAccentInk`.
     static let gsPeach = Color(hex: 0xFFC400)
     static let gsPeachSoft = Color(hex: 0xFFF0C2)
+    /// Success accent for confirmations (item added, etc.).
+    static let gsMint = Color(hex: 0x8DE0B0)
     /// Accent text/icons on light surfaces — deep amber, 5.2:1 on white (passes AA).
     static let gsAccentInk = Color(hex: 0x8F6300)
     /// Bottom dock and primary CTAs — black.

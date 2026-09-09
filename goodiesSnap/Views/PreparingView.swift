@@ -10,6 +10,7 @@ struct PreparingView: View {
     @State private var step = 0
     @State private var markIn = false
     @State private var spin = false
+    @State private var burst = false
 
     private let steps = [
         "Saving your taste profile",
@@ -17,6 +18,35 @@ struct PreparingView: View {
         "Building your shopping list",
         "Setting the table",
     ]
+
+    /// First name for a warm greeting, falling back gracefully.
+    private var firstName: String {
+        let n = store.userName.trimmingCharacters(in: .whitespaces)
+        return n.split(separator: " ").first.map(String.init) ?? (n.isEmpty ? "" : n)
+    }
+
+    private var headline: String {
+        switch store.welcome {
+        case .newAccount:
+            return firstName.isEmpty ? "Welcome to goodiesSnap!" : "Welcome, \(firstName)!"
+        case .returning:
+            return firstName.isEmpty ? "Welcome back!" : "Welcome back, \(firstName)!"
+        case nil:
+            return "Getting your kitchen ready"
+        }
+    }
+
+    private var subhead: String {
+        switch store.welcome {
+        case .newAccount: return "Setting up your kitchen…"
+        case .returning: return "Loading your kitchen…"
+        case nil: return "Just a moment"
+        }
+    }
+
+    /// A returning user doesn't need the first-run setup checklist — just a quick greeting.
+    private var showsSteps: Bool { store.welcome != .returning }
+    private var isWelcome: Bool { store.welcome != nil }
 
     var body: some View {
         ZStack {
@@ -26,6 +56,19 @@ struct PreparingView: View {
                 Spacer()
 
                 ZStack {
+                    // A celebratory burst behind the logo, just for the welcome.
+                    if isWelcome {
+                        ForEach(0..<8, id: \.self) { i in
+                            Circle()
+                                .fill(i.isMultiple(of: 2) ? Color.gsPeach : Color.gsAccentInk.opacity(0.5))
+                                .frame(width: 10, height: 10)
+                                .offset(y: burst ? -96 : -20)
+                                .rotationEffect(.degrees(Double(i) / 8 * 360))
+                                .opacity(burst ? 0 : 1)
+                                .scaleEffect(burst ? 0.4 : 1)
+                        }
+                    }
+
                     Circle()
                         .stroke(Color.gsFill, lineWidth: 5)
                         .frame(width: 128, height: 128)
@@ -46,13 +89,20 @@ struct PreparingView: View {
                         .opacity(markIn ? 1 : 0)
                 }
 
-                Text("Getting your kitchen ready")
-                    .font(nunito(23, .black))
+                Text(headline)
+                    .font(nunito(24, .black))
                     .multilineTextAlignment(.center)
                     .padding(.top, 30)
                     .padding(.horizontal, 30)
+                    .transition(.opacity)
 
-                // One line per step, ticking off as it completes.
+                Text(subhead)
+                    .font(nunito(13, .semibold))
+                    .foregroundStyle(Color.gsMuted)
+                    .padding(.top, 4)
+
+                // One line per step, ticking off as it completes (skipped for returning users).
+                if showsSteps {
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(Array(steps.enumerated()), id: \.offset) { i, label in
                         HStack(spacing: 10) {
@@ -76,6 +126,7 @@ struct PreparingView: View {
                 }
                 .frame(maxWidth: 260)
                 .padding(.top, 26)
+                }
 
                 Spacer()
             }
@@ -84,17 +135,26 @@ struct PreparingView: View {
         .onAppear {
             spin = true
             withAnimation(.spring(response: 0.55, dampingFraction: 0.74)) { markIn = true }
+            if isWelcome {
+                Haptics.notify(.success)
+                withAnimation(.easeOut(duration: 0.8)) { burst = true }
+            }
             advance()
         }
     }
 
     private func advance() {
         Task {
-            for i in 0..<steps.count {
-                try? await Task.sleep(for: .seconds(i == 0 ? 0.45 : 0.5))
-                withAnimation(AppStore.stepAnimation) { step = i }
+            if showsSteps {
+                for i in 0..<steps.count {
+                    try? await Task.sleep(for: .seconds(i == 0 ? 0.45 : 0.5))
+                    withAnimation(AppStore.stepAnimation) { step = i }
+                }
+                try? await Task.sleep(for: .seconds(0.45))
+            } else {
+                // Returning user: a brief, warm beat, then straight to Home.
+                try? await Task.sleep(for: .seconds(1.3))
             }
-            try? await Task.sleep(for: .seconds(0.45))
             store.finishPreparing()
         }
     }

@@ -34,7 +34,7 @@ struct DiscoverView: View {
                 } else {
                     LazyVGrid(columns: columns, spacing: 14) {
                         ForEach(store.catalog) { recipe in
-                            DiscoverCard(recipe: recipe)
+                            CatalogCard(recipe: recipe)
                                 .onAppear {
                                     // Infinite scroll: load the next page as the last card appears.
                                     if recipe.id == store.catalog.last?.id {
@@ -146,7 +146,8 @@ struct DiscoverView: View {
 }
 
 /// A compact catalog card: cover image, title, cuisine, and a saved indicator.
-private struct DiscoverCard: View {
+/// Shared by Discover and the redesigned Library tab.
+struct CatalogCard: View {
     @EnvironmentObject var store: AppStore
     let recipe: Recipe
 
