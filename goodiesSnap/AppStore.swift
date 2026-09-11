@@ -5,7 +5,7 @@ import UIKit
 @MainActor
 final class AppStore: ObservableObject {
     enum Phase { case splash, onboard, preferences, createAccount, preparing, app }
-    enum Screen { case home, importer, scanIdentify, scanResults, library, detail, cook, shopping, basket, plan, profile, feed, discover, reviews, paywall, auth }
+    enum Screen { case home, importer, scanIdentify, scanResults, library, detail, cook, shopping, basket, plan, profile, feed, discover, reviews, reelProfile, paywall, auth }
 
     /// Which way the next screen change should animate.
     enum NavDirection { case forward, backward, lateral }
@@ -16,6 +16,7 @@ final class AppStore: ObservableObject {
         // Meal plan is a tab root now, so it sits at depth 0 with the other tabs.
         case .home, .importer, .library, .shopping, .plan: return 0
         case .scanIdentify, .scanResults, .detail, .profile, .feed, .discover, .basket, .reviews: return 1
+        case .reelProfile: return 2
         case .cook, .paywall, .auth: return 2
         }
     }
@@ -94,6 +95,15 @@ final class AppStore: ObservableObject {
     @Published var fetchingDish: String?
     /// A detected food the user tapped, shown in the ingredient sheet.
     @Published var foodDetail: IngredientConfidence?
+    /// Author whose reel profile is open.
+    @Published var reelProfileAuthor: String?
+    /// A reel the feed should jump to, set when one is opened from a profile grid.
+    @Published var reelFocusID: String?
+    /// Artwork for AI-suggested matches, keyed by match id. Filled in from the catalog after
+    /// the scan lands, so a suggestion shows the real dish instead of a placeholder tile.
+    @Published var matchArtwork: [String: String] = [:]
+    /// The snapped frame written to disk, so a generated recipe can keep the user's own photo.
+    private var scanPhotoURL: String?
     /// Plan + remaining AI actions.
     @Published var entitlement = Entitlement()
     /// Why the paywall is on screen, and where to return when it's dismissed.
@@ -110,6 +120,25 @@ final class AppStore: ObservableObject {
 
     /// True when AI work can run server-side, where the key lives and the quota is enforced.
     var usesServerAI: Bool { aiToken != nil }
+
+    /// Renews an expired access token via SocialStore and returns the fresh one. Wired in
+    /// App.swift. Lets a signed-in user whose access token lapsed keep working instead of
+    /// being sent back to the sign-in screen mid-import.
+    var refreshAIToken: (() async -> String?)?
+
+    /// Runs a metered proxy call, and on a 401 (expired access token) refreshes the token
+    /// once and retries — so an expired token silently renews instead of surfacing as
+    /// "sign in again". Any other failure propagates to `handleAIError`.
+    func proxyWithRetry<T>(_ op: (String) async throws -> RecipeExtractor.ProxyResult<T>) async throws -> RecipeExtractor.ProxyResult<T> {
+        guard let token = aiToken else { throw RecipeExtractor.ProxyError.notSignedIn }
+        do {
+            return try await op(token)
+        } catch RecipeExtractor.ProxyError.notSignedIn {
+            guard let fresh = await refreshAIToken?() else { throw RecipeExtractor.ProxyError.notSignedIn }
+            aiToken = fresh
+            return try await op(fresh)
+        }
+    }
     /// Why the sign-up wall appeared, so the screen can say what it unlocks.
     @Published var authReason: AuthReason = .general
     @Published private(set) var authReturn: Screen = .home
@@ -191,6 +220,33 @@ final class AppStore: ObservableObject {
         persistEntitlement()
     }
 
+    /// Pulls the entitlement the server actually enforces and mirrors it locally, so the
+    /// client's gating (camera, quota) can't disagree with what the AI proxy will allow.
+    /// The server is authoritative: a plan bought on another device, or granted server-side,
+    /// shows up here even when this device's StoreKit has no record of it. Runs at launch and
+    /// after sign-in — a no-op (leaves local state untouched) if it can't reach the server.
+    func refreshServerEntitlement(token: String) async {
+        guard let server = try? await SocialAPI.fetchEntitlement(token: token) else { return }
+        if let plan = Entitlement.Plan(rawValue: server.plan) {
+            entitlement.plan = plan
+        }
+        entitlement.period = server.period
+        entitlement.used = max(0, server.used)
+        entitlement.topUp = max(0, server.top_up)
+        entitlement.trialUntil = Self.isoDate(server.trial_until)
+        entitlement.rollOverIfNeeded()
+        persistEntitlement()
+    }
+
+    /// Parses the server's ISO-8601 timestamps (with or without fractional seconds).
+    private static func isoDate(_ raw: String?) -> Date? {
+        guard let raw else { return nil }
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = withFraction.date(from: raw) { return date }
+        return ISO8601DateFormatter().date(from: raw)
+    }
+
     /// Maps a failed AI call to the right destination: paywall when the server refused on
     /// entitlement, a toast when it was a genuine failure.
     func handleAIError(_ error: Error) {
@@ -209,6 +265,19 @@ final class AppStore: ObservableObject {
             }
         }
         reportAIFailure(error)
+    }
+
+    /// A creator's reel page, opened from the author line on a reel.
+    func openReelProfile(authorID: String) {
+        Haptics.tap(.light)
+        reelProfileAuthor = authorID
+        go(to: .reelProfile)
+    }
+
+    /// Opens a specific reel in the feed — used by the profile grid.
+    func openReel(_ reel: Reel) {
+        reelFocusID = reel.id
+        go(to: .feed)
     }
 
     /// Profile is an account screen — signed out there is nothing in it but blanks, so
@@ -340,7 +409,9 @@ final class AppStore: ObservableObject {
     static let days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     static let weekDates = [17, 18, 19, 20, 21, 22, 23]
 
-    private struct Persisted: Codable {
+    /// The whole local snapshot — persisted to UserDefaults and, for a signed-in user, synced
+    /// to their account so it follows them to any device. Not private: the sync layer encodes it.
+    struct Persisted: Codable {
         var recipes: [Recipe]
         var shopping: [ShoppingItem]
         var plan: [String: String]
@@ -375,10 +446,82 @@ final class AppStore: ObservableObject {
     }
 
     func persist() {
-        let saved = Persisted(recipes: recipes, shopping: shopping, plan: plan, name: userName, preferences: preferences)
+        let saved = snapshot
         if let data = try? JSONEncoder().encode(saved) {
             UserDefaults.standard.set(data, forKey: Self.storeKey)
         }
+        pushStateToServer()
+    }
+
+    /// The current local state as one snapshot.
+    var snapshot: Persisted {
+        Persisted(recipes: recipes, shopping: shopping, plan: plan, name: userName, preferences: preferences)
+    }
+
+    // MARK: - Account sync
+
+    private var syncPushTask: Task<Void, Never>?
+
+    /// Debounced upload of the whole app state to the user's account, so it follows them to
+    /// any device. No-op when signed out; failures are silent (the local copy is still saved).
+    private func pushStateToServer() {
+        guard let token = aiToken, let uid = currentUserID else { return }
+        let state = snapshot
+        syncPushTask?.cancel()
+        syncPushTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))   // coalesce rapid edits into one write
+            guard !Task.isCancelled else { return }
+            try? await SocialAPI.saveUserState(state, token: token, userID: uid)
+            _ = self
+        }
+    }
+
+    /// Pulls the account's synced state and merges it with what's on this device, then saves
+    /// the union back up so every device converges. Called after sign-in and at launch.
+    private var pullInFlight = false
+
+    func pullAndMergeServerState() async {
+        guard let token = aiToken, let uid = currentUserID else { return }
+        guard !pullInFlight else { return }
+        pullInFlight = true
+        defer { pullInFlight = false }
+
+        // Distinguish "no row yet" (a fresh account) from a transient error: only the former
+        // should seed the account from this device.
+        let remoteOrNil: AppStore.Persisted?
+        do { remoteOrNil = try await SocialAPI.fetchUserState(token: token, userID: uid) }
+        catch { return }   // network/transient — keep local, try again next launch
+
+        guard let remote = remoteOrNil else {
+            // The account has never synced — push this device's local state up as the seed.
+            persist()
+            return
+        }
+
+        // Union recipes and shopping by id (local wins on a shared id — this device may have
+        // just edited it); remote adds anything this device has never seen.
+        var mergedRecipes = recipes
+        let localRecipeIDs = Set(recipes.map(\.id))
+        mergedRecipes.append(contentsOf: remote.recipes.filter { !localRecipeIDs.contains($0.id) })
+
+        var mergedShopping = shopping
+        let localItemIDs = Set(shopping.map(\.id))
+        mergedShopping.append(contentsOf: remote.shopping.filter { !localItemIDs.contains($0.id) })
+
+        // Meal plan: keep local assignments, fill any empty day from remote.
+        var mergedPlan = plan
+        for (day, id) in remote.plan where mergedPlan[day] == nil { mergedPlan[day] = id }
+
+        withAnimation(Self.lateralAnimation) {
+            recipes = mergedRecipes
+            shopping = mergedShopping
+            plan = mergedPlan
+            if userName.isEmpty, let name = remote.name, !name.isEmpty { userName = name }
+            if !preferences.isComplete, let prefs = remote.preferences, prefs.isComplete {
+                preferences = prefs
+            }
+        }
+        persist()   // writes locally and pushes the merged union back up
     }
 
     // MARK: - Launch flow
@@ -391,13 +534,22 @@ final class AppStore: ObservableObject {
         splashTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(Self.splashDuration))
             guard let self, !Task.isCancelled, self.phase == .splash else { return }
-            withAnimation(.easeOut(duration: 0.4)) { self.phase = .onboard }
+            self.advanceFromSplash()
         }
     }
 
     func endSplash() {
         splashTask?.cancel()
-        withAnimation(.easeOut(duration: 0.4)) { phase = .onboard }
+        advanceFromSplash()
+    }
+
+    /// After the splash, a returning user (saved session) goes straight to the app; only a
+    /// first launch with no session sees onboarding.
+    private func advanceFromSplash() {
+        guard phase == .splash else { return }
+        withAnimation(.easeOut(duration: 0.4)) {
+            phase = isAuthenticated ? .app : .onboard
+        }
     }
 
     func onboardNext() {
@@ -494,6 +646,7 @@ final class AppStore: ObservableObject {
         case .cook: return detailReturn
         case .scanIdentify, .scanResults: return .importer
         case .profile, .feed: return .home
+        case .reelProfile: return .home
         case .basket: return .shopping
         case .discover: return .library
         case .reviews: return detailReturn
@@ -512,6 +665,7 @@ final class AppStore: ObservableObject {
         case .scanIdentify: return .importer
         case .basket: return .shopping
         case .reviews: return .detail
+        case .reelProfile: return .feed
         case .profile, .feed: return .home
         case .paywall: return paywallReturn
         case .auth: return authReturn
@@ -563,13 +717,18 @@ final class AppStore: ObservableObject {
 
     // MARK: - Selection / derived
 
-    var selected: Recipe? { recipes.first { $0.id == selId } ?? recipes.first }
+    /// The recipe last opened, even when it isn't in the library (a feed post, a catalog
+    /// preview). Prefer the saved copy so edits/favourites stay live; fall back to this so a
+    /// non-saved recipe still shows its own details instead of another recipe's.
+    @Published var openedRecipe: Recipe?
+
+    var selected: Recipe? { recipes.first { $0.id == selId } ?? openedRecipe }
 
     var showTabs: Bool {
         // Profile is account settings, not a tab destination — the dock is hidden there and
         // you leave by the back chevron or the edge swipe, like cook mode and the paywall.
         phase == .app && screen != .cook && screen != .scanIdentify && screen != .paywall
-            && screen != .auth && screen != .profile
+            && screen != .auth && screen != .profile && screen != .feed && screen != .reelProfile
     }
 
     var undoneCount: Int { shopping.filter { !$0.done }.count }
@@ -806,6 +965,15 @@ final class AppStore: ObservableObject {
             .filter { !$0.1.isEmpty }
     }
 
+    /// Removes a single item from the list (swipe-to-delete).
+    func removeItem(_ id: String) {
+        Haptics.tap(.medium)
+        withAnimation(Self.pushAnimation) {
+            shopping.removeAll { $0.id == id }
+        }
+        persist()
+    }
+
     /// Removes a whole basket from the list.
     func removeBasket(_ id: String) {
         Haptics.tap(.medium)
@@ -836,6 +1004,12 @@ final class AppStore: ObservableObject {
         let known = items.compactMap(\.priceCents)
         return known.isEmpty ? nil : known.reduce(0, +)
     }
+
+    /// Grand total across the whole list, in cents. nil until at least one item is priced.
+    var cartTotalCents: Int? { priceTotalCents(shopping) }
+
+    /// How many items on the list have a known price, for "12 of 15 priced".
+    var pricedItemCount: Int { shopping.filter { $0.priceCents != nil }.count }
 
     // MARK: - Discover
 
@@ -984,17 +1158,25 @@ final class AppStore: ObservableObject {
     }
 
     func openCatalogRecipe(_ recipe: Recipe) {
-        if !recipes.contains(where: { $0.id == recipe.id }) {
-            recipes.insert(recipe, at: 0)
-            persist()
-        }
+        saveToLibrary(recipe)
         open(recipe)
+    }
+
+    /// Saves a recipe into the library without navigating — for the reel feed's Save button,
+    /// where the point is to keep scrolling. Returns true only when it was newly added.
+    @discardableResult
+    func saveToLibrary(_ recipe: Recipe) -> Bool {
+        guard !recipes.contains(where: { $0.id == recipe.id }) else { return false }
+        recipes.insert(recipe, at: 0)
+        persist()
+        return true
     }
 
     // MARK: - Recipes
 
     func open(_ recipe: Recipe) {
         if Self.depth(of: screen) == 0 { detailReturn = screen }
+        openedRecipe = recipe
         selId = recipe.id
         cookStep = 0
         go(to: .detail)
@@ -1014,6 +1196,17 @@ final class AppStore: ObservableObject {
         recipes.removeAll { $0.id == sel.id }
         selId = nil
         go(to: .library)
+        persist()
+    }
+
+    /// Removes a saved recipe by id (swipe-to-delete in the library), also clearing it from
+    /// any meal-plan day it was assigned to.
+    func deleteRecipe(_ id: String) {
+        Haptics.tap(.medium)
+        for (day, planned) in plan where planned == id { plan[day] = nil }
+        withAnimation(Self.pushAnimation) {
+            recipes.removeAll { $0.id == id }
+        }
         persist()
     }
 
@@ -1123,10 +1316,13 @@ final class AppStore: ObservableObject {
         guard !t.isEmpty else { return }
         guard useAIAction() else { return }
         let source = detect(t)
-        if let token = aiToken {
+        if aiToken != nil {
             runLiveExtraction { [weak self] in
-                let result = try await RecipeExtractor.proxyExtract(from: t, token: token, sourceLabel: source)
-                self?.applyServerQuota(remaining: result.remaining, plan: result.plan)
+                guard let self else { throw RecipeExtractor.ProxyError.notSignedIn }
+                let result = try await self.proxyWithRetry { token in
+                    try await RecipeExtractor.proxyExtract(from: t, token: token, sourceLabel: source)
+                }
+                self.applyServerQuota(remaining: result.remaining, plan: result.plan)
                 return result.value
             }
             return
@@ -1215,8 +1411,11 @@ final class AppStore: ObservableObject {
         beginIdentifying()
         Task { [weak self] in
             do {
-                let result = try await RecipeExtractor.proxyAnalyzeFoodPhoto(image, token: token)
-                guard let self, self.identifyingFood else { return }
+                guard let self else { return }
+                let result = try await self.proxyWithRetry { token in
+                    try await RecipeExtractor.proxyAnalyzeFoodPhoto(image, token: token)
+                }
+                guard self.identifyingFood else { return }
                 self.applyServerQuota(remaining: result.remaining, plan: result.plan)
                 self.finishIdentifying(with: result.value)
             } catch {
@@ -1256,6 +1455,7 @@ final class AppStore: ObservableObject {
             identifyingFood = true
             scanIngredients = []
             scanMatches = []
+            matchArtwork = [:]
             scanStatus = "Reading the plate…"
         }
         Task { [weak self] in
@@ -1278,11 +1478,56 @@ final class AppStore: ObservableObject {
         scanWeight = analysis.weightGrams
         scanIngredients = analysis.ingredients
         scanMatches = matches(for: analysis)
+        scanPhotoURL = ScanPhotoStore.save(scanImage)
+        loadMatchArtwork()
         withAnimation(Self.pushAnimation) {
             identifyingFood = false
             scanStatus = ""
             go(to: .scanResults)
         }
+    }
+
+    /// Looks each AI suggestion up in the server catalog by title and keeps the first photo
+    /// it finds. Best-effort and per-match, so one miss never blocks the others.
+    private func loadMatchArtwork() {
+        let wanted = scanMatches.filter { !$0.isInLibrary }
+        guard !wanted.isEmpty else { return }
+
+        // The catalog is free and already ours, so ask it about every suggestion.
+        for match in wanted {
+            Task { [weak self] in
+                guard let rows = try? await CatalogService.fetch(search: match.dishName, limit: 1),
+                      let img = rows.first?.recipe.img, !img.isEmpty else { return }
+                await MainActor.run { self?.matchArtwork[match.id] = img }
+            }
+        }
+
+        // Google is billed per query, so only the closest match earns one on the scan itself.
+        // The rest keep the user's own photo until they're actually tapped.
+        if let top = wanted.first {
+            Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(600))   // give the catalog a chance first
+                await self?.searchArtwork(for: top)
+            }
+        }
+    }
+
+    /// Buys one image-search query for `match`, unless something already answered for it.
+    /// Server-side this hits a shared cache first, so a repeated dish costs nothing.
+    private func searchArtwork(for match: FoodScanMatch) async {
+        guard matchArtwork[match.id] == nil, let token = aiToken else { return }
+        guard let found = await RecipeExtractor.proxyDishImage(dish: match.dishName, token: token)
+        else { return }
+        matchArtwork[match.id] = found
+    }
+
+    /// The picture to show for a match: the catalog's photo of that dish, else the frame the
+    /// user actually snapped — every suggestion is a name for that same plate.
+    func artwork(for match: FoodScanMatch) -> URL? {
+        if let recipe = recipe(for: match) { return recipe.imageURL }
+        if let found = matchArtwork[match.id] { return URL(string: found) }
+        if let photo = scanPhotoURL { return URL(string: photo) }
+        return nil
     }
 
     func recipe(for match: FoodScanMatch) -> Recipe? {
@@ -1306,14 +1551,21 @@ final class AppStore: ObservableObject {
         guard useAIAction() else { return }
         Haptics.tap(.medium)
 
+        // Now that this dish is genuinely being used, it's worth buying its photo — the
+        // recipe we're about to save will keep it. Runs alongside the write, not before it.
+        Task { [weak self] in await self?.searchArtwork(for: match) }
+
         let detected = scanIngredients
-        if let token = aiToken {
+        if aiToken != nil {
             withAnimation(Self.lateralAnimation) { fetchingDish = match.dishName }
             Task { [weak self] in
                 do {
-                    let result = try await RecipeExtractor.proxyGenerateRecipe(
-                        forDish: match.dishName, detected: detected, token: token)
-                    guard let self, self.fetchingDish != nil else { return }
+                    guard let self else { return }
+                    let result = try await self.proxyWithRetry { token in
+                        try await RecipeExtractor.proxyGenerateRecipe(
+                            forDish: match.dishName, detected: detected, token: token)
+                    }
+                    guard self.fetchingDish != nil else { return }
                     self.applyServerQuota(remaining: result.remaining, plan: result.plan)
                     self.presentFetched(result.value, for: match)
                 } catch {
@@ -1356,8 +1608,14 @@ final class AppStore: ObservableObject {
     }
 
     /// Saves a freshly generated recipe into the library and opens it.
-    private func presentFetched(_ recipe: Recipe, for match: FoodScanMatch) {
+    private func presentFetched(_ fetched: Recipe, for match: FoodScanMatch) {
         Haptics.notify(.success)
+        var recipe = fetched
+        // The extractor can only fall back to a generic stock photo by cuisine. We have better:
+        // the catalog's photo of this dish, or failing that the frame the user just snapped.
+        if let real = matchArtwork[match.id] ?? scanPhotoURL {
+            recipe.img = real
+        }
         recipes.insert(recipe, at: 0)
         persist()
         // Point the match at the now-real recipe so a second tap is instant.

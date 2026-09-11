@@ -25,8 +25,11 @@ const RECIPE_SYSTEM = `You are the recipe engine inside goodiesSnap, a recipe-ke
 Extract or reconstruct one complete recipe from the user's content. Quantities use \
 metric-friendly home-cook units. Each ingredient gets the single best supermarket-aisle \
 category. Steps are clear, one action each, no life stories. Estimate calories and macros \
-per serving honestly. cuisine is a short label like "Italian", "Thai", "West African", or \
-"Breakfast". If the content contains no plausible recipe at all, use the title "Not a recipe" \
+per serving honestly. Always give realistic non-zero prep_minutes and cook_minutes: if the \
+source states them, use those; otherwise estimate sensible values from the ingredients and \
+steps (a typical home recipe is at least 5 minutes prep, and cook_minutes may be 0 only for \
+genuinely no-cook dishes like a salad or smoothie). cuisine is a short label like "Italian", \
+"Thai", "West African", or "Breakfast". If the content contains no plausible recipe at all, use the title "Not a recipe" \
 and leave ingredients and steps empty. When the content is a YouTube cooking video whose \
 description or chapters contain timestamps, fill step_seconds with the start time in whole \
 seconds for each step, aligned to steps by index (use -1 for any step you cannot place). If \
@@ -170,6 +173,61 @@ async function callModel(opts: {
   return { payload: JSON.parse(text), costMicros, model: opts.model };
 }
 
+/**
+ * Image-search queries allowed per day, across all users. Google bills $5/1000, so this is a
+ * spend ceiling of about $1/day. Override with IMAGE_SEARCH_DAILY_LIMIT; set it to 100 to stay
+ * inside Google's free daily allowance entirely.
+ */
+const DEFAULT_IMAGE_LIMIT = 200;
+
+/** Normalised cache key for a dish name: lowercase, alphanumerics and single spaces. */
+function dishKey(dish: string): string {
+  return dish.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
+}
+
+/**
+ * Looks a dish up on Google Images via the Custom Search JSON API and returns the first
+ * usable photo URL, or null.
+ *
+ * Runs here rather than on the device so the key never ships in the binary. Restricted to
+ * photos licensed for reuse (`rights`) — an app cannot paste arbitrary search results onto
+ * saved recipes. Returns null (never throws) when the keys are unset or the quota is spent,
+ * so the caller falls back to the user's own scan photo.
+ */
+async function googleImage(dish: string): Promise<{ image: string | null; reached: boolean }> {
+  const key = Deno.env.get('GOOGLE_CSE_KEY');
+  const cx = Deno.env.get('GOOGLE_CSE_CX');
+  if (!key || !cx || !dish.trim()) return { image: null, reached: false };
+
+  const url = new URL('https://www.googleapis.com/customsearch/v1');
+  url.searchParams.set('key', key);
+  url.searchParams.set('cx', cx);
+  url.searchParams.set('q', `${dish} recipe dish`);
+  url.searchParams.set('searchType', 'image');
+  url.searchParams.set('imgType', 'photo');
+  url.searchParams.set('imgSize', 'large');
+  url.searchParams.set('num', '3');
+  url.searchParams.set('safe', 'active');
+  // Only images the licence allows us to reuse.
+  url.searchParams.set('rights', 'cc_publicdomain|cc_attribute|cc_sharealike');
+
+  try {
+    const res = await fetch(url.toString());
+    if (!res.ok) {
+      console.error('google image search failed:', res.status, await res.text());
+      // 4xx/5xx from Google is not a "no such dish" answer, so don't let it be cached.
+      return { image: null, reached: false };
+    }
+    const body = await res.json();
+    const items: any[] = body.items ?? [];
+    const hit = items.find((i) => typeof i.link === 'string' && /^https:/.test(i.link));
+    return { image: hit?.link ?? null, reached: true };
+  } catch (err) {
+    console.error('google image search threw:', err);
+    return { image: null, reached: false };
+  }
+}
+
 export default async function (req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
@@ -197,6 +255,49 @@ export default async function (req: Request): Promise<Response> {
 
   const action: string = req_body?.action ?? '';
   const needsCamera = action === 'scan';
+
+  // Artwork lookup is not a model call, so it is deliberately outside the meter — charging a
+  // user an AI action to fetch a thumbnail would be indefensible. It is billed per query
+  // though ($5/1000), so it goes through a shared cache first and only ever reaches Google
+  // on a genuine miss.
+  if (action === 'image_search') {
+    const dish: string = String(req_body.dish ?? '').slice(0, 120);
+    const key = dishKey(dish);
+    if (!key) return json({ data: { image: null } });
+
+    const { data: cached } = await client.database.rpc('get_dish_artwork', { p_key: key });
+    const row = Array.isArray(cached) ? cached[0] : cached;
+    // A cached miss is still a cache hit: we already paid to learn there is nothing here.
+    if (row?.found) return json({ data: { image: row.image_url ?? null, cached: true } });
+
+    // Circuit breaker. Google has no spend cap of its own, so this is the only thing between
+    // a traffic spike and an unbounded bill.
+    const limit = Number(Deno.env.get('IMAGE_SEARCH_DAILY_LIMIT') ?? DEFAULT_IMAGE_LIMIT);
+    const { data: claimed } = await client.database
+      .rpc('claim_image_search', { p_limit: limit });
+    // A scalar-returning RPC can come back bare or wrapped, depending on the client.
+    const allowed = Array.isArray(claimed)
+      ? (claimed[0]?.claim_image_search ?? claimed[0])
+      : claimed;
+    if (allowed !== true) {
+      // Over budget for today. Answer null but do NOT cache it — nothing was looked up, and
+      // caching this would permanently blacklist the dish for a temporary condition.
+      console.warn(`image search budget spent (${limit}/day); serving null for "${dish}"`);
+      return json({ data: { image: null, cached: false, budget_exhausted: true } });
+    }
+
+    const { image, reached } = await googleImage(dish);
+    if (!reached) {
+      await client.database.rpc('release_image_search');
+      return json({ data: { image: null, cached: false } });
+    }
+
+    // Only a real answer from Google gets cached, misses included.
+    await client.database.rpc('cache_dish_artwork', {
+      p_key: key, p_name: dish, p_url: image, p_source: 'google',
+    });
+    return json({ data: { image, cached: false } });
+  }
 
   // 1. Spend the action first — never call the model on an unmetered request.
   const { data: gate, error: gateError } = await client.database

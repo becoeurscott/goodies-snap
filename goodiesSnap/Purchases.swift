@@ -159,7 +159,11 @@ final class Purchases: ObservableObject {
         }
 
         activePlan = best
-        if let latest { _ = await redeem(latest) } else { onPlanChange?(.free) }
+        // Only ever UPGRADE from StoreKit's on-device view. An empty `currentEntitlements`
+        // is normal in Debug/sandbox and does NOT mean the user lost their plan — clobbering
+        // it to free here is what made a purchased Pro "not save". Real downgrades (expiry,
+        // refund) come from the server, which is authoritative for the plan.
+        if let latest { _ = await redeem(latest) }
     }
 
     // MARK: - Server hand-off
@@ -186,9 +190,15 @@ final class Purchases: ObservableObject {
                 onPlanChange?(granted)
                 return .success(granted)
             } catch {
-                // Do NOT finish: leaving it unfinished means StoreKit replays it through
-                // `Transaction.updates`, so a network failure here can't lose a purchase.
-                return .failed("Purchase went through, but we couldn't activate it yet. It'll retry automatically.")
+                // The server couldn't confirm it (offline, a transient error, or a
+                // StoreKit-Test transaction that Apple's server library can't verify). The
+                // transaction is already cryptographically verified on-device, so honour it
+                // locally now — the user paid and must get access. We deliberately do NOT
+                // finish it, so `Transaction.updates` replays it and the server records it
+                // for quota once it can. Metering stays server-authoritative via the AI proxy.
+                activePlan = plan
+                onPlanChange?(plan)
+                return .success(plan)
             }
         }
 

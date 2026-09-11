@@ -215,6 +215,60 @@ enum SocialAPI {
         try await send("DELETE", "posts", query: "id=eq.\(id)", token: token)
     }
 
+    // MARK: - Reels
+
+    /// The community reel feed: user-uploaded video posts, newest first. YouTube recipe reels
+    /// are synthesised on the client from the catalog, so this only returns uploaded reels.
+    static func fetchReels(token: String, limit: Int = 60) async throws -> [FeedPost] {
+        try await get("posts",
+                      query: "kind=eq.reel&hidden_at=is.null&order=created_at.desc&limit=\(limit)",
+                      token: token)
+    }
+
+    /// Uploads a reel clip to the public reel-videos bucket and returns its object URL.
+    static func uploadReelVideo(_ data: Data, token: String, userID: String) async throws -> String {
+        let key = "\(userID)-\(Int(Date().timeIntervalSince1970 * 1000)).mp4"
+        var request = URLRequest(url: baseURL.appending(path: "/api/storage/buckets/reel-videos/objects/\(key)"))
+        request.httpMethod = "PUT"
+        request.timeoutInterval = 120
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let boundary = "gs-\(UUID().uuidString)"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(key)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: video/mp4\r\n\r\n".data(using: .utf8)!)
+        body.append(data)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        request.httpBody = body
+        let (respData, response) = try await URLSession.shared.data(for: request)
+        try check(response, data: respData)
+        return baseURL.appending(path: "/api/storage/buckets/reel-videos/objects/\(key)").absoluteString
+    }
+
+    /// Creates a reel post (kind = "reel"). `recipe` optionally links the clip to a recipe so
+    /// viewers can open it; `thumbURL` is a poster frame for the feed.
+    static func createReel(videoURL: String, thumbURL: String?, caption: String, recipe: Recipe?,
+                           durationSeconds: Int?, token: String, userID: String) async throws -> FeedPost {
+        struct Row: Encodable {
+            let author_id: String
+            let caption: String
+            let recipe: Recipe?
+            let kind: String
+            let video_url: String
+            let thumb_url: String?
+            let duration_seconds: Int?
+        }
+        let rows: [FeedPost] = try await send(
+            "POST", "posts",
+            body: [Row(author_id: userID, caption: caption, recipe: recipe, kind: "reel",
+                       video_url: videoURL, thumb_url: thumbURL ?? recipe?.img, duration_seconds: durationSeconds)],
+            token: token, returning: true
+        )
+        guard let post = rows.first else { throw SocialError.server("Reel failed") }
+        return post
+    }
+
     static func like(postID: String, token: String, userID: String) async throws {
         struct Row: Encodable { let post_id: String; let user_id: String }
         try await send("POST", "likes", body: [Row(post_id: postID, user_id: userID)], token: token)
@@ -348,9 +402,56 @@ enum SocialAPI {
         return plan
     }
 
+    /// The account's entitlement as the server sees it — the source of truth the AI-metering
+    /// RPC actually enforces. The client mirrors this so the plan can't drift from what the
+    /// server will allow (e.g. after a purchase verified on another device, or when StoreKit
+    /// on this device has no record of the sub). Returns nil when the row doesn't exist yet.
+    struct ServerEntitlement: Decodable {
+        let plan: String
+        let used: Int
+        let top_up: Int
+        let period: String
+        let trial_until: String?
+    }
+
+    static func fetchEntitlement(token: String) async throws -> ServerEntitlement? {
+        // RLS scopes the read to the caller's own row, so no user_id filter is needed.
+        let rows: [ServerEntitlement] = try await get(
+            "entitlements",
+            query: "select=plan,used,top_up,period,trial_until&limit=1",
+            token: token)
+        return rows.first
+    }
+
     // MARK: - Low-level records helpers
 
     private struct Profile: Decodable { let display_name: String }
+
+    // MARK: - Account state sync
+
+    private struct StateRow: Decodable { let data: AppStore.Persisted?; let updated_at: String? }
+    private struct StateUpload: Encodable { let user_id: String; let data: AppStore.Persisted }
+
+    /// The user's synced app state, or nil if they've never synced from any device.
+    static func fetchUserState(token: String, userID: String) async throws -> AppStore.Persisted? {
+        let rows: [StateRow] = try await get(
+            "user_state", query: "user_id=eq.\(userID)&select=data,updated_at&limit=1", token: token)
+        return rows.first?.data
+    }
+
+    /// Upserts the whole app-state blob for this user (last-write-wins per device).
+    static func saveUserState(_ state: AppStore.Persisted, token: String, userID: String) async throws {
+        var request = URLRequest(url: recordsURL("user_state", query: nil))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Insert-or-update on the user_id primary key.
+        request.setValue("resolution=merge-duplicates", forHTTPHeaderField: "Prefer")
+        request.httpBody = try JSONEncoder().encode([StateUpload(user_id: userID, data: state)])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try check(response, data: data)
+    }
 
     private static func recordsURL(_ table: String, query: String?) -> URL {
         var url = baseURL.appending(path: "/api/database/records/\(table)")
@@ -426,9 +527,17 @@ struct FeedPost: Codable, Identifiable, Hashable {
     var like_count: Int
     var comment_count: Int
     let created_at: String
+    // Reel fields — present only on kind == "reel". Optional so older/other posts decode.
+    var video_url: String? = nil
+    var youtube_id: String? = nil
+    var thumb_url: String? = nil
+    var duration_seconds: Int? = nil
 
     var imageURL: URL? { URL(string: image_url ?? recipe?.img ?? "") }
     var isQuestion: Bool { kind == "question" }
+    var isReel: Bool { kind == "reel" }
+    var videoURL: URL? { URL(string: video_url ?? "") }
+    var thumbURL: URL? { URL(string: thumb_url ?? recipe?.img ?? "") }
 
     var relativeTime: String {
         let formatter = ISO8601DateFormatter()

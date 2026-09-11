@@ -21,6 +21,11 @@
 	<string>goodiesSnap uses the camera to scan a dish and identify what's on the plate.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>goodiesSnap reads photos you pick so it can identify the dish and write the recipe.</string>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchYellow</string>
+	</dict>
 	<key>UIAppFonts</key>
 	<array>
 		<string>NunitoSans-400.ttf</string>

@@ -454,14 +454,26 @@ enum RecipeExtractor {
             throw ExtractionError.emptyResponse
         }
 
+        // Safety net for when the model returns 0 minutes (it does when the source states no
+        // times): estimate from the recipe's size so a card never shows "0 min".
+        var prep = max(0, extracted.prep_minutes)
+        var cook = max(0, extracted.cook_minutes)
+        if prep + cook == 0 {
+            // ~2 min prep per ingredient (5-25), ~4 min cook per step (10-60).
+            prep = min(25, max(5, extracted.ingredients.count * 2))
+            cook = min(60, max(10, extracted.steps.count * 4))
+        } else if prep == 0 {
+            prep = min(25, max(5, extracted.ingredients.count * 2))
+        }
+
         return Recipe(
             id: "r\(Int(Date().timeIntervalSince1970 * 1000))",
             title: extracted.title,
             cuisine: extracted.cuisine,
             img: imageURL ?? fallbackImage(for: extracted.cuisine),
             source: sourceLabel,
-            prep: extracted.prep_minutes,
-            cook: extracted.cook_minutes,
+            prep: prep,
+            cook: cook,
             servings: max(1, extracted.servings),
             cal: extracted.calories_per_serving,
             macros: Macros(protein: extracted.protein_g, carbs: extracted.carbs_g, fat: extracted.fat_g),
@@ -633,6 +645,18 @@ enum RecipeExtractor {
             value: try recipe(from: result.value, sourceLabel: "Dish scan", imageURL: nil),
             remaining: result.remaining, plan: result.plan
         )
+    }
+
+    /// Asks the proxy for a photo of `dish` from Google Images. Returns nil rather than
+    /// throwing — artwork is a nicety, and a miss must never interrupt the scan.
+    ///
+    /// Costs no AI action: the proxy answers this one before the meter.
+    static func proxyDishImage(dish: String, token: String) async -> String? {
+        guard let result = try? await callProxy(
+            body: ["action": "image_search", "dish": dish], token: token
+        ) else { return nil }
+        struct Wire: Decodable { let image: String? }
+        return (try? JSONDecoder().decode(Wire.self, from: result.value))?.image
     }
 
     // MARK: - Page fetching & HTML utilities

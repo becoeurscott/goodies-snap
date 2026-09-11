@@ -223,11 +223,23 @@ struct ScanIdentifyView: View {
 
     private var reticle: CGFloat { 300 }
 
+    /// True once there's a photo to scan — either the frozen camera capture or a photo
+    /// picked from the library. In that state we show the whole picture, not a reticle:
+    /// the AI reads the entire image, so cropping it to a square is misleading.
+    private var hasShot: Bool { store.scanImage != nil }
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             backdrop
             scrim
+
+            // Scanning an imported/captured photo: sweep the scan line across the whole
+            // picture rather than a small square, so it reads as "the whole photo is scanned".
+            if hasShot && store.identifyingFood {
+                fullSweep
+            }
+
             content
 
             if shutterFlash {
@@ -263,9 +275,12 @@ struct ScanIdentifyView: View {
     @ViewBuilder
     private var backdrop: some View {
         if let shot = store.scanImage {
+            // Fit, not fill: show the whole imported/captured photo so nothing is cropped
+            // out of view. The black background fills any letterboxing.
             Image(uiImage: shot)
                 .resizable()
-                .aspectRatio(contentMode: .fill)
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea()
                 .transition(.opacity)
         } else if camera.status == .running {
@@ -281,30 +296,68 @@ struct ScanIdentifyView: View {
         }
     }
 
-    /// Darkens everything outside the reticle so the plate reads as the subject.
+    /// Darkens everything outside the reticle so the plate reads as the subject. Once a
+    /// photo is captured or imported, the whole image is the subject, so we dim it
+    /// uniformly (lightly) instead of punching a square hole — the photo stays fully visible.
+    @ViewBuilder
     private var scrim: some View {
-        Color.black.opacity(store.identifyingFood ? 0.55 : 0.38)
-            .ignoresSafeArea()
-            .mask {
-                ZStack {
-                    Rectangle().ignoresSafeArea()
-                    RoundedRectangle(cornerRadius: 34, style: .continuous)
-                        .frame(width: reticle, height: reticle)
-                        .blendMode(.destinationOut)
+        if hasShot {
+            Color.black.opacity(store.identifyingFood ? 0.28 : 0.12)
+                .ignoresSafeArea()
+                .animation(.easeOut(duration: 0.3), value: store.identifyingFood)
+        } else {
+            Color.black.opacity(store.identifyingFood ? 0.55 : 0.38)
+                .ignoresSafeArea()
+                .mask {
+                    ZStack {
+                        Rectangle().ignoresSafeArea()
+                        RoundedRectangle(cornerRadius: 34, style: .continuous)
+                            .frame(width: reticle, height: reticle)
+                            .blendMode(.destinationOut)
+                    }
+                    .compositingGroup()
                 }
-                .compositingGroup()
-            }
-            .animation(.easeOut(duration: 0.3), value: store.identifyingFood)
+                .animation(.easeOut(duration: 0.3), value: store.identifyingFood)
+        }
     }
 
     private var content: some View {
         VStack(spacing: 0) {
             header
             Spacer(minLength: 8)
-            reticleStack
+            // The camera reticle is only for aiming the live camera. Once there's a photo,
+            // the full-screen sweep takes over, so drop the square.
+            if !hasShot { reticleStack }
             statusBlock
             Spacer()
             if !store.identifyingFood { controls }
+        }
+    }
+
+    /// A scan line that travels the full height of the screen, over the whole photo.
+    private var fullSweep: some View {
+        GeometryReader { geo in
+            let h = geo.size.height
+            ZStack(alignment: .top) {
+                LinearGradient(
+                    colors: [Color.gsPeach.opacity(0), Color.gsPeach.opacity(0.35), Color.gsPeach.opacity(0)],
+                    startPoint: .top, endPoint: .bottom
+                )
+                .frame(height: 120)
+                .offset(y: sweep ? h - 120 : 0)
+
+                Rectangle()
+                    .fill(Color.gsPeach)
+                    .frame(height: 3)
+                    .shadow(color: Color.gsPeach.opacity(0.9), radius: 8)
+                    .offset(y: sweep ? h : 0)
+            }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .onAppear {
+            sweep = false
+            withAnimation(.easeInOut(duration: 1.05).repeatForever(autoreverses: true)) { sweep = true }
         }
     }
 
@@ -614,10 +667,22 @@ struct ScanRecipeMatchCard: View {
 
     @ViewBuilder
     private var thumbnail: some View {
-        if let recipe {
-            CoverImage(url: recipe.imageURL)
+        if let art = store.artwork(for: match) {
+            CoverImage(url: art)
                 .frame(width: 76, height: 76)
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                // A suggestion still has to read as "not written yet", so it keeps a small
+                // sparkle over the photo rather than looking like a saved recipe.
+                .overlay(alignment: .bottomTrailing) {
+                    if recipe == nil {
+                        Image(systemName: "wand.and.stars")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(Color.gsAccentInk)
+                            .padding(5)
+                            .background(Color.gsBg.opacity(0.92), in: Circle())
+                            .padding(5)
+                    }
+                }
         } else {
             ZStack {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)

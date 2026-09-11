@@ -41,6 +41,18 @@ final class SocialStore: ObservableObject {
     /// Filter to apply once groups load (slug, or "mine").
     var pendingFilterSlug: String? = nil
 
+    // MARK: Reels (the community tab)
+    @Published var reels: [Reel] = []
+    @Published var reelsLoading = false
+    /// Local likes for YouTube reels, which have no server row. Persisted per device.
+    @Published var likedYouTubeReelIDs: Set<String> = []
+    /// True while a reel upload is in flight.
+    @Published var reelUploading = false
+    /// Drives the reel composer sheet.
+    @Published var composingReel = false
+
+    private static let reelLikesKey = "gs_liked_yt_reels"
+
     var visiblePosts: [FeedPost] {
         switch feedFilter {
         case nil: return posts
@@ -60,6 +72,9 @@ final class SocialStore: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: Self.sessionKey),
            let saved = try? JSONDecoder().decode(SocialAPI.Session.self, from: data) {
             session = saved
+        }
+        if let ids = UserDefaults.standard.stringArray(forKey: Self.reelLikesKey) {
+            likedYouTubeReelIDs = Set(ids)
         }
     }
 
@@ -110,11 +125,30 @@ final class SocialStore: ObservableObject {
             let exists = try await SocialAPI.accountExists(session: current)
             if !exists { signOut() }               // account was deleted
         } catch SocialAPI.SocialError.sessionExpired {
-            // Try one refresh; if even that fails, the session is dead.
-            if (try? await SocialAPI.refresh(session: current)) == nil { signOut() }
+            // Try one refresh; keep the renewed session so the fresh access token is what
+            // the app actually uses. If even the refresh fails, the session is dead.
+            if let renewed = try? await SocialAPI.refresh(session: current) {
+                session = renewed
+            } else {
+                signOut()
+            }
         } catch {
             // Network/transient error — keep the session, don't sign the user out.
         }
+    }
+
+    /// Exchanges the refresh token for a fresh access token and adopts the renewed session,
+    /// returning the new access token. Used by the AI proxy path: an expired access token
+    /// should silently renew, not bounce the signed-in user to the sign-in screen.
+    /// Returns nil (and signs out) only when the refresh token itself is dead.
+    func refreshedToken() async -> String? {
+        guard let current = session else { return nil }
+        guard let renewed = try? await SocialAPI.refresh(session: current) else {
+            signOut()
+            return nil
+        }
+        session = renewed
+        return renewed.accessToken
     }
 
     func signOut() {
@@ -222,6 +256,109 @@ final class SocialStore: ObservableObject {
         } catch {
             handle(error)
             return false
+        }
+    }
+
+    // MARK: - Reels
+
+    /// Loads the community reel feed: uploaded reels (when signed in) on top, then YouTube
+    /// recipe reels from the catalog so the feed is never empty. Refreshes like state too.
+    func loadReels(force: Bool = false) async {
+        guard reels.isEmpty || force else { return }
+        reelsLoading = reels.isEmpty
+        var uploaded: [FeedPost] = []
+        if session != nil {
+            do {
+                (uploaded, likedPostIDs) = try await authed { s in
+                    async let r = SocialAPI.fetchReels(token: s.accessToken)
+                    async let l = SocialAPI.fetchMyLikes(token: s.accessToken, userID: s.userID)
+                    return try await (r, l)
+                }
+            } catch { handle(error) }
+        }
+        let youtube = (try? await CatalogService.reelRecipes(limit: 30)) ?? []
+        var items = uploaded.compactMap { Reel(upload: $0) }
+        items += youtube.map { Reel(youtube: $0) }
+        withAnimation(AppStore.lateralAnimation) { self.reels = items }
+        reelsLoading = false
+    }
+
+    func isReelLiked(_ reel: Reel) -> Bool {
+        reel.isUpload ? likedPostIDs.contains(reel.id) : likedYouTubeReelIDs.contains(reel.id)
+    }
+
+    /// Likes/unlikes a reel. Uploaded reels hit the server; YouTube reels toggle a local set.
+    func toggleReelLike(_ reel: Reel) {
+        guard let idx = reels.firstIndex(where: { $0.id == reel.id }) else { return }
+        Haptics.tap(.light)
+        let wasLiked = isReelLiked(reel)
+        withAnimation(AppStore.stepAnimation) {
+            reels[idx].likeCount = max(0, reels[idx].likeCount + (wasLiked ? -1 : 1))
+        }
+        if reel.isUpload {
+            if wasLiked { likedPostIDs.remove(reel.id) } else { likedPostIDs.insert(reel.id) }
+            guard session != nil else { return }
+            Task {
+                do {
+                    try await authed { s in
+                        if wasLiked {
+                            try await SocialAPI.unlike(postID: reel.id, token: s.accessToken, userID: s.userID)
+                        } else {
+                            try await SocialAPI.like(postID: reel.id, token: s.accessToken, userID: s.userID)
+                        }
+                    }
+                } catch { handle(error) }
+            }
+        } else {
+            if wasLiked { likedYouTubeReelIDs.remove(reel.id) } else { likedYouTubeReelIDs.insert(reel.id) }
+            UserDefaults.standard.set(Array(likedYouTubeReelIDs), forKey: Self.reelLikesKey)
+        }
+    }
+
+    /// Opens comments for an uploaded reel (YouTube reels have none).
+    func openReelComments(_ reel: Reel) {
+        guard let post = reel.post else { return }
+        openComments(post)
+    }
+
+    /// Uploads a clip and publishes it as a reel, prepended to the feed.
+    func publishReel(videoData: Data, thumbnail: UIImage?, caption: String,
+                     recipe: Recipe?, duration: Int?) async -> Bool {
+        guard session != nil else { return false }
+        reelUploading = true
+        defer { reelUploading = false }
+        do {
+            let post = try await authed { s -> FeedPost in
+                let url = try await SocialAPI.uploadReelVideo(videoData, token: s.accessToken, userID: s.userID)
+                var thumbURL: String? = nil
+                if let thumbnail, let data = thumbnail.jpegData(compressionQuality: 0.7) {
+                    thumbURL = try? await SocialAPI.uploadImage(data, token: s.accessToken, userID: s.userID)
+                }
+                return try await SocialAPI.createReel(
+                    videoURL: url, thumbURL: thumbURL, caption: caption, recipe: recipe,
+                    durationSeconds: duration, token: s.accessToken, userID: s.userID)
+            }
+            if let reel = Reel(upload: post) {
+                withAnimation(AppStore.sheetAnimation) {
+                    reels.insert(reel, at: 0)
+                    composingReel = false
+                }
+            }
+            Haptics.notify(.success)
+            return true
+        } catch {
+            handle(error)
+            return false
+        }
+    }
+
+    /// Deletes the current user's uploaded reel.
+    func deleteReel(_ reel: Reel) {
+        guard reel.isUpload, session != nil else { return }
+        withAnimation(AppStore.sheetAnimation) { reels.removeAll { $0.id == reel.id } }
+        Task {
+            do { try await authed { s in try await SocialAPI.deletePost(id: reel.id, token: s.accessToken) } }
+            catch { handle(error); await loadReels(force: true) }
         }
     }
 

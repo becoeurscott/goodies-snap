@@ -17,6 +17,11 @@ struct ShoppingView: View {
                     storeBar
                         .padding(.top, 18)
 
+                    if let total = store.cartTotalCents {
+                        totalBar(total)
+                            .padding(.top, 12)
+                    }
+
                     // One card per recipe you're shopping for; the items live inside.
                     VStack(spacing: 12) {
                         ForEach(store.shopByRecipe, id: \.id) { group in
@@ -144,6 +149,37 @@ struct ShoppingView: View {
         }
     }
 
+    /// Running total of every priced item on the list, at the chosen store.
+    private func totalBar(_ cents: Int) -> some View {
+        let priced = store.pricedItemCount
+        let all = store.shopping.count
+        return HStack(spacing: 12) {
+            Image(systemName: "cart.fill")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(Color.gsAccentInk)
+                .frame(width: 42, height: 42)
+                .background(Color.gsPeachSoft)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Estimated total")
+                    .font(nunito(13.5, .extrabold))
+                Text(priced == all ? "All \(all) items priced" : "\(priced) of \(all) items priced")
+                    .font(nunito(10.5, .semibold))
+                    .foregroundStyle(Color.gsMuted)
+            }
+            Spacer()
+            Text(store.formatPrice(cents))
+                .font(nunito(22, .black))
+                .foregroundStyle(Color.gsAccentInk)
+        }
+        .padding(.horizontal, 16)
+        .frame(minHeight: 62)
+        .background(Color.gsPeachSoft.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .strokeBorder(Color.gsPeach.opacity(0.45), lineWidth: 1.5))
+    }
+
     // MARK: Header + add
 
     private var header: some View {
@@ -187,7 +223,62 @@ struct ShoppingRow: View {
     let item: ShoppingItem
     let isLast: Bool
 
+    /// How far the row is dragged left, revealing the delete action behind it.
+    @State private var offset: CGFloat = 0
+    /// Past this drag distance, a single swipe deletes without a second tap.
+    private let deleteThreshold: CGFloat = 200
+    /// How much the row rests open at, showing the Delete button.
+    private let revealWidth: CGFloat = 84
+
     var body: some View {
+        ZStack(alignment: .trailing) {
+            // The delete action sits behind the row, revealed as it slides left.
+            Button { delete() } label: {
+                Image(systemName: "trash.fill")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: revealWidth, height: 48)
+                    .background(Color.red)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .opacity(offset < -8 ? 1 : 0)
+
+            rowContent
+                .background(Color.gsCard)
+                .offset(x: offset)
+                .gesture(
+                    DragGesture(minimumDistance: 12)
+                        .onChanged { value in
+                            // Left-only; a little rightward slack so a downward scroll still wins.
+                            if value.translation.width < 0 {
+                                offset = max(value.translation.width, -deleteThreshold - 40)
+                            }
+                        }
+                        .onEnded { value in
+                            if value.translation.width < -deleteThreshold {
+                                delete()
+                            } else if value.translation.width < -revealWidth / 2 {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { offset = -revealWidth }
+                            } else {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { offset = 0 }
+                            }
+                        }
+                )
+        }
+        .overlay(alignment: .bottom) {
+            if !isLast {
+                Rectangle().fill(Color.fg(0.07)).frame(height: 1)
+            }
+        }
+    }
+
+    private func delete() {
+        withAnimation(.easeIn(duration: 0.2)) { offset = -500 }
+        store.removeItem(item.id)
+    }
+
+    private var rowContent: some View {
         Button { store.toggleItem(item.id) } label: {
             HStack(spacing: 12) {
                 ZStack {
@@ -235,11 +326,6 @@ struct ShoppingRow: View {
             .frame(minHeight: 48)
         }
         .buttonStyle(.plain)
-        .overlay(alignment: .bottom) {
-            if !isLast {
-                Rectangle().fill(Color.fg(0.07)).frame(height: 1)
-            }
-        }
     }
 }
 
@@ -322,7 +408,56 @@ struct BasketCard: View {
     private var total: Int { group.items.count }
     private var allDone: Bool { total > 0 && bought == total }
 
+    /// How far the card is dragged left, revealing the delete action behind it.
+    @State private var offset: CGFloat = 0
+    private let deleteThreshold: CGFloat = 240
+    private let revealWidth: CGFloat = 88
+
     var body: some View {
+        ZStack(alignment: .trailing) {
+            // Delete action sits behind the card, revealed as it slides left.
+            Button { delete() } label: {
+                VStack(spacing: 4) {
+                    Image(systemName: "trash.fill").font(.system(size: 17, weight: .bold))
+                    Text("Delete").font(nunito(11, .extrabold))
+                }
+                .foregroundStyle(.white)
+                .frame(width: revealWidth)
+                .frame(maxHeight: .infinity)
+                .background(Color.red)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .opacity(offset < -8 ? 1 : 0)
+
+            cardBody
+                .offset(x: offset)
+                .gesture(
+                    DragGesture(minimumDistance: 14)
+                        .onChanged { value in
+                            if value.translation.width < 0 {
+                                offset = max(value.translation.width, -deleteThreshold - 40)
+                            }
+                        }
+                        .onEnded { value in
+                            if value.translation.width < -deleteThreshold {
+                                delete()
+                            } else if value.translation.width < -revealWidth / 2 {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { offset = -revealWidth }
+                            } else {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { offset = 0 }
+                            }
+                        }
+                )
+        }
+    }
+
+    private func delete() {
+        withAnimation(.easeIn(duration: 0.2)) { offset = -600 }
+        store.removeBasket(group.id)
+    }
+
+    private var cardBody: some View {
         Button { store.openBasket(group.id) } label: {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .top, spacing: 12) {

@@ -20,8 +20,9 @@ enum Promo {
     static let welcomeWindowDays = 7
     /// Days of Pro unlocked by the trial.
     static let trialDays = 7
-    /// Hard action cap during the trial — this is what bounds acquisition cost (~$0.22/user).
-    static let trialActions = 25
+    /// Hard action cap during the trial — this is what bounds acquisition cost.
+    /// Must match the server's `trial_allowance()`, which is the source of truth.
+    static let trialActions = 5
 
     /// Introductory price for the first month — half of the standing price.
     ///

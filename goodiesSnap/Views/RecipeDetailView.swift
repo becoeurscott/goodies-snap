@@ -38,25 +38,6 @@ struct RecipeDetailView: View {
                             .foregroundStyle(Color.gsMuted)
                             .padding(.top, 12)
 
-                        if sel.hasVideo, let vid = sel.videoID {
-                            Text("Watch")
-                                .font(nunito(19, .extrabold))
-                                .padding(.top, 26)
-
-                            YouTubePlayerView(videoID: vid, seek: seek)
-                                .aspectRatio(16.0 / 9.0, contentMode: .fit)
-                                .frame(maxWidth: .infinity)
-                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                                .padding(.top, 10)
-
-                            Text(sel.stepSeconds?.contains(where: { $0 >= 0 }) == true
-                                 ? "Tap ▶ on a step to jump the video there · from YouTube"
-                                 : "Plays here in the app · from YouTube")
-                                .font(nunito(11.5, .semibold))
-                                .foregroundStyle(Color.gsMuted)
-                                .padding(.top, 8)
-                        }
-
                         HStack(alignment: .firstTextBaseline) {
                             Text("Ingredients")
                                 .font(nunito(19, .extrabold))
@@ -117,6 +98,25 @@ struct RecipeDetailView: View {
                                     .padding(.bottom, 12)
                                 }
                             }
+                        }
+
+                        if sel.hasVideo, let vid = sel.videoID {
+                            Text("Watch")
+                                .font(nunito(19, .extrabold))
+                                .padding(.top, 26)
+
+                            YouTubePlayerView(videoID: vid, seek: seek)
+                                .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                                .frame(maxWidth: .infinity)
+                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                .padding(.top, 10)
+
+                            Text(sel.stepSeconds?.contains(where: { $0 >= 0 }) == true
+                                 ? "Tap ▶ on a step to jump the video there · from YouTube"
+                                 : "Plays here in the app · from YouTube")
+                                .font(nunito(11.5, .semibold))
+                                .foregroundStyle(Color.gsMuted)
+                                .padding(.top, 8)
                         }
 
                         if !sel.notes.isEmpty {

@@ -53,6 +53,11 @@ struct RootView: View {
         .onChange(of: social.session?.accessToken) { _, token in
             store.aiToken = token
             store.currentUserID = social.session?.userID
+            // Whenever a token first arrives (sign-in or restore), bring the account's saved
+            // state onto this device. Idempotent, so it's safe alongside the App.swift paths.
+            if token != nil {
+                Task { await store.pullAndMergeServerState() }
+            }
         }
         .onOpenURL { url in
             guard url.scheme == "goodiessnap" else { return }
@@ -189,6 +194,15 @@ struct RootView: View {
             }
         case "results", "food", "fetching":
             store.scanMock()
+            // Give the mock a frame to work with, so the artwork path (scan photo behind a
+            // suggestion, and on the recipe it writes) is exercised like a real scan.
+            Task {
+                if let url = URL(string: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=900&q=80"),
+                   let (data, _) = try? await URLSession.shared.data(from: url),
+                   let image = UIImage(data: data) {
+                    store.scanImage = image
+                }
+            }
             Task {
                 // Let the mock scan land on the results screen first.
                 try? await Task.sleep(for: .seconds(3.2))
@@ -260,6 +274,11 @@ struct RootView: View {
                     .zIndex(50)
             }
 
+            if social.composingReel {
+                ReelComposeSheet()
+                    .zIndex(52)
+            }
+
             if social.reporting != nil {
                 // Above the comments sheet: a comment is reported from on top of it.
                 ReportSheet()
@@ -312,7 +331,8 @@ struct RootView: View {
                 case .basket: BasketView()
                 case .plan: MealPlanView()
                 case .profile: ProfileView()
-                case .feed: FeedView()
+                case .feed: ReelsView()
+                case .reelProfile: ReelProfileView()
                 case .discover: DiscoverView()
                 case .reviews: ReviewsView()
                 case .paywall: PaywallView()

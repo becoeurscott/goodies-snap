@@ -19,6 +19,8 @@ struct ProfileView: View {
                     .padding(.top, 22)
                 statsGrid
                     .padding(.top, 16)
+                subscriptionCard
+                    .padding(.top, 16)
                 tasteSection
                     .padding(.top, 28)
                 actionsSection
@@ -315,6 +317,69 @@ struct ProfileView: View {
         .glassCard(radius: 26)
         .onChange(of: nameFocused) { _, focused in
             if !focused { store.persist() }
+        }
+    }
+
+    /// Shows the plan. On free it's an Upgrade CTA into the paywall; on a paid plan it
+    /// confirms the subscription and lets the user manage it.
+    @ViewBuilder
+    private var subscriptionCard: some View {
+        let plan = store.entitlement.plan
+        if plan.isPaid {
+            HStack(spacing: 12) {
+                Image(systemName: "crown.fill")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Color.gsAccentInk)
+                    .frame(width: 42, height: 42)
+                    .background(Color.gsPeachSoft)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("\(plan.title) active")
+                        .font(nunito(15, .extrabold))
+                    Text("\(store.entitlement.remaining) AI actions left this month")
+                        .font(nunito(11.5, .semibold))
+                        .foregroundStyle(Color.gsMuted)
+                }
+                Spacer()
+                Button("Manage") { store.showPaywall(.upgrade) }
+                    .font(nunito(12.5, .extrabold))
+                    .foregroundStyle(Color.gsAccentInk)
+                    .buttonStyle(.plain)
+            }
+            .padding(14)
+            .glassCard(radius: 20, fill: 0.05, stroke: 0.1)
+        } else {
+            Button { store.showPaywall(.upgrade) } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(Color.gsPeach)
+                        .frame(width: 42, height: 42)
+                        .background(Color.gsDock)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Upgrade to Pro")
+                            .font(nunito(15, .extrabold))
+                        Text("\(store.entitlement.remaining) free AI actions left this month")
+                            .font(nunito(11.5, .semibold))
+                            .foregroundStyle(Color.fg(0.5))
+                    }
+                    Spacer(minLength: 8)
+                    Text("Upgrade")
+                        .font(nunito(12.5, .extrabold))
+                        .foregroundStyle(Color.white)
+                        .padding(.horizontal, 14)
+                        .frame(height: 34)
+                        .background(Color.gsDock)
+                        .clipShape(Capsule())
+                }
+                .padding(14)
+                .background(Color.gsPeachSoft)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(Color.gsPeach.opacity(0.5), lineWidth: 1.5))
+            }
+            .buttonStyle(PressableStyle(scale: 0.98))
         }
     }
 

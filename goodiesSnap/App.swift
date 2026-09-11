@@ -17,6 +17,9 @@ struct GoodiesSnapApp: App {
                     // Wire the purchase layer to the rest of the app once, at launch:
                     // transactions can arrive before the paywall is ever opened.
                     purchases.authToken = { [weak social] in social?.session?.accessToken }
+                    // Lets a lapsed access token silently renew during an AI call instead of
+                    // bouncing the signed-in user back to the sign-in screen.
+                    store.refreshAIToken = { [weak social] in await social?.refreshedToken() }
                     // Deterministic post-sign-in redirect + token propagation.
                     social.onSignedIn = { [weak store, weak social] isNewAccount in
                         store?.aiToken = social?.session?.accessToken
@@ -26,12 +29,33 @@ struct GoodiesSnapApp: App {
                             store?.userName = name
                         }
                         store?.authenticationSucceeded(newAccount: isNewAccount)
+                        // The server owns the plan; mirror it so gating matches enforcement.
+                        if let token = social?.session?.accessToken {
+                            store?.aiToken = token
+                            store?.currentUserID = social?.session?.userID
+                            Task {
+                                await store?.refreshServerEntitlement(token: token)
+                                // Bring this account's saved recipes/plan/answers onto the device.
+                                await store?.pullAndMergeServerState()
+                            }
+                        }
                     }
                     purchases.onPlanChange = { [weak store] plan in store?.applyPurchasedPlan(plan) }
                     // Drop a stale/deleted persisted login before the UI trusts it.
                     await social.validateSession()
                     await purchases.loadProducts()
                     await purchases.refreshEntitlements()
+                    // Server is authoritative — run last so it corrects any StoreKit-derived
+                    // plan on a silently restored session (StoreKit may not know about a sub
+                    // this device never bought).
+                    if let token = social.session?.accessToken {
+                        store.aiToken = token
+                        store.currentUserID = social.session?.userID
+                        await store.refreshServerEntitlement(token: token)
+                        // A silently restored session (returning user, maybe a new device):
+                        // pull their account state and merge it onto whatever is local.
+                        await store.pullAndMergeServerState()
+                    }
                 }
         }
     }

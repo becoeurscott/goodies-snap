@@ -725,7 +725,55 @@ struct SavedCard: View {
     @EnvironmentObject var store: AppStore
     let recipe: Recipe
 
+    /// How far the card is dragged left, revealing the delete action behind it.
+    @State private var offset: CGFloat = 0
+    private let deleteThreshold: CGFloat = 220
+    private let revealWidth: CGFloat = 88
+
     var body: some View {
+        ZStack(alignment: .trailing) {
+            // Delete action sits behind the card, revealed as it slides left.
+            Button { delete() } label: {
+                VStack(spacing: 4) {
+                    Image(systemName: "trash.fill").font(.system(size: 17, weight: .bold))
+                    Text("Delete").font(nunito(11, .extrabold))
+                }
+                .foregroundStyle(.white)
+                .frame(width: revealWidth, height: 96)
+                .background(Color.red)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .opacity(offset < -8 ? 1 : 0)
+
+            card
+                .offset(x: offset)
+                .gesture(
+                    DragGesture(minimumDistance: 14)
+                        .onChanged { value in
+                            if value.translation.width < 0 {
+                                offset = max(value.translation.width, -deleteThreshold - 40)
+                            }
+                        }
+                        .onEnded { value in
+                            if value.translation.width < -deleteThreshold {
+                                delete()
+                            } else if value.translation.width < -revealWidth / 2 {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { offset = -revealWidth }
+                            } else {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { offset = 0 }
+                            }
+                        }
+                )
+        }
+    }
+
+    private func delete() {
+        withAnimation(.easeIn(duration: 0.2)) { offset = -600 }
+        store.deleteRecipe(recipe.id)
+    }
+
+    private var card: some View {
         Button { store.open(recipe) } label: {
             HStack(spacing: 14) {
                 CoverImage(url: recipe.imageURL)

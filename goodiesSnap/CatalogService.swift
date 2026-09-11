@@ -50,8 +50,23 @@ enum CatalogService {
                 favorite: false,
                 ingredients: ingredients.map { Ingredient(name: $0.name, qty: $0.qty, category: $0.category) },
                 steps: steps,
-                notes: notes
+                notes: Self.cleanedNotes(notes),
+                videoID: CatalogService.youTubeID(in: notes)
             )
+        }
+
+        /// TheMealDB keeps the cooking video as a "Video: <url>" line inside `notes`. Once the
+        /// id is lifted out into `videoID` the player shows it properly, so the raw link would
+        /// just be a dead string under the recipe.
+        static func cleanedNotes(_ notes: String) -> String {
+            notes
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .filter { line in
+                    let l = line.lowercased()
+                    return !(l.contains("youtu") && l.contains("video"))
+                }
+                .joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
         }
     }
 
@@ -105,6 +120,42 @@ enum CatalogService {
         // Exclude anything the user asked to avoid, then pick a varied handful.
         let filtered = rows.filter { !prefs.matchesAvoidance($0.recipe) }
         return Array(filtered.shuffled().prefix(limit))
+    }
+
+    /// Recipes that ship with a cooking video, for the community reel feed. TheMealDB stores
+    /// the YouTube link in `notes` ("Video: <url>"); we pull those rows, parse the id, and
+    /// hand back the recipe plus its video id. Shuffled so the feed varies between opens.
+    struct ReelRecipe { let recipe: Recipe; let youtubeID: String }
+
+    static func reelRecipes(limit: Int = 40) async throws -> [ReelRecipe] {
+        // Over-fetch, then keep only rows whose note yields a usable id.
+        let rows: [Row] = try await get(
+            "catalog_recipes",
+            query: "select=*&published=eq.true&notes=ilike.*youtu*&limit=200")
+        let reels: [ReelRecipe] = rows.compactMap { row in
+            guard let id = youTubeID(in: row.notes) else { return nil }
+            return ReelRecipe(recipe: row.recipe, youtubeID: id)
+        }
+        return Array(reels.shuffled().prefix(limit))
+    }
+
+    /// Extracts a YouTube video id from a watch / shorts / youtu.be URL embedded in text.
+    static func youTubeID(in text: String) -> String? {
+        let patterns = [
+            #"(?:v=)([A-Za-z0-9_-]{11})"#,
+            #"(?:shorts/)([A-Za-z0-9_-]{11})"#,
+            #"(?:youtu\.be/)([A-Za-z0-9_-]{11})"#,
+            #"(?:embed/)([A-Za-z0-9_-]{11})"#,
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(text.startIndex..., in: text)
+            if let match = regex.firstMatch(in: text, range: range), match.numberOfRanges > 1,
+               let idRange = Range(match.range(at: 1), in: text) {
+                return String(text[idRange])
+            }
+        }
+        return nil
     }
 
     // MARK: - Transport

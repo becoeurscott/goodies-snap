@@ -253,6 +253,25 @@ struct CoverImage: View {
 
     var body: some View {
         GeometryReader { geo in
+            // A scanned photo is a local file; AsyncImage goes through URLSession, so load
+            // those straight off disk instead.
+            if let url, url.isFileURL {
+                if let image = UIImage(contentsOfFile: url.path) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .clipped()
+                } else {
+                    ZStack {
+                        Color.gsFill
+                        Image(systemName: "photo")
+                            .font(.system(size: 20, weight: .light))
+                            .foregroundStyle(Color.gsMuted)
+                    }
+                    .frame(width: geo.size.width, height: geo.size.height)
+                }
+            } else {
             AsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let image):
@@ -271,6 +290,7 @@ struct CoverImage: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .clipped()
+            }
         }
     }
 }
