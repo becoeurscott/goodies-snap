@@ -14,6 +14,12 @@ struct RootView: View {
                 appContent
             }
 
+            if store.phase == .welcome {
+                WelcomeView()
+                    .transition(.opacity)
+                    .zIndex(72)
+            }
+
             if store.phase == .onboard {
                 OnboardingView()
                     .transition(.opacity)
@@ -285,16 +291,6 @@ struct RootView: View {
                     .zIndex(56)
             }
 
-            if store.writingReview {
-                WriteReviewSheet()
-                    .zIndex(55)
-            }
-
-            if store.reportingReview != nil {
-                ReviewReportSheet()
-                    .zIndex(57)
-            }
-
             if !store.toast.isEmpty {
                 VStack {
                     Spacer()
@@ -334,7 +330,6 @@ struct RootView: View {
                 case .feed: ReelsView()
                 case .reelProfile: ReelProfileView()
                 case .discover: DiscoverView()
-                case .reviews: ReviewsView()
                 case .paywall: PaywallView()
                 case .auth: AuthView()
                 }
@@ -466,7 +461,7 @@ struct TabBarView: View {
     }
 
     private func tab(_ screen: AppStore.Screen, active: Bool, system: String, badge: Int = 0) -> some View {
-        Button { store.go(to: screen) } label: {
+        Button { store.selectTab(screen) } label: {
             Image(systemName: system)
                 .font(.system(size: 20, weight: .semibold))
                 // On translucent glass the inactive weight has to carry more contrast than

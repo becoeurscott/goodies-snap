@@ -7,6 +7,7 @@ import SwiftUI
 /// swapping that call for a verified transaction — the layout stays as-is.
 struct PaywallView: View {
     @EnvironmentObject var store: AppStore
+    @EnvironmentObject var purchases: Purchases
     @State private var selected = "pro-year"
     @State private var trialOn = true
     @State private var showCodeSheet = false
@@ -190,8 +191,36 @@ struct PaywallView: View {
         // With the trial switched on, a Pro choice starts the free week instead of billing.
         if trialOn, offer.plan == .pro, store.entitlement.canStartTrial {
             store.startProTrial()
-        } else {
-            store.activate(offer.plan, annual: offer.annual)
+            return
+        }
+        Task { await buy(offer) }
+    }
+
+    /// Runs the real StoreKit purchase. On success the server verifies the receipt and raises
+    /// the plan, so the later server sync agrees instead of reverting to free — which is what
+    /// made a chosen plan disappear before. Falls back to a DEBUG-only local unlock only where
+    /// StoreKit products can't load (e.g. the plain simulator).
+    @MainActor
+    private func buy(_ offer: Offer) async {
+        guard purchases.product(for: offer.plan, annual: offer.annual) != nil else {
+            #if DEBUG
+            store.debugUnlock(offer.plan, annual: offer.annual)
+            #else
+            store.showToast("Subscriptions aren’t available right now. Please try again shortly.")
+            #endif
+            return
+        }
+        switch await purchases.purchase(plan: offer.plan, annual: offer.annual) {
+        case .success:
+            // `onPlanChange` already applied the plan and the server now knows about it.
+            store.goBack()
+        case .pending:
+            store.showToast("Your purchase is pending approval.")
+        case .cancelled:
+            break
+        case .failed(let message):
+            Haptics.notify(.error)
+            store.showToast(message)
         }
     }
 }

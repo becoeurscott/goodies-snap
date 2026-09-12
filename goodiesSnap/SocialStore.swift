@@ -9,6 +9,8 @@ final class SocialStore: ObservableObject {
     /// Called right after a successful sign-in/sign-up, on the main actor. Wired in App.swift
     /// to drive navigation — deterministic, unlike a SwiftUI onChange on a computed property.
     var onSignedIn: ((_ isNewAccount: Bool) -> Void)?
+    /// Called right after the session is torn down, so AppStore can reset to a logged-out state.
+    var onSignedOut: (() -> Void)?
 
     @Published var posts: [FeedPost] = []
     @Published var likedPostIDs: Set<String> = []
@@ -44,6 +46,8 @@ final class SocialStore: ObservableObject {
     // MARK: Reels (the community tab)
     @Published var reels: [Reel] = []
     @Published var reelsLoading = false
+    /// YouTube view counts by video id, filled in after the feed loads.
+    @Published var reelViews: [String: Int] = [:]
     /// Local likes for YouTube reels, which have no server row. Persisted per device.
     @Published var likedYouTubeReelIDs: Set<String> = []
     /// True while a reel upload is in flight.
@@ -157,6 +161,7 @@ final class SocialStore: ObservableObject {
             posts = []
             likedPostIDs = []
         }
+        onSignedOut?()
     }
 
     /// Runs an authenticated call; on 401 refreshes the session once and retries.
@@ -281,6 +286,29 @@ final class SocialStore: ObservableObject {
         items += youtube.map { Reel(youtube: $0) }
         withAnimation(AppStore.lateralAnimation) { self.reels = items }
         reelsLoading = false
+        loadReelViews()
+    }
+
+    /// Pulls YouTube view counts for the recipe reels in one batched proxy call. Best effort:
+    /// the feed is already on screen and simply gains the counts a moment later.
+    private func loadReelViews() {
+        guard let token = session?.accessToken else { return }
+        let ids: [String] = reels.compactMap { reel in
+            if case .youtube(let id) = reel.source { return id }
+            return nil
+        }
+        guard !ids.isEmpty else { return }
+        Task { [weak self] in
+            let stats = await RecipeExtractor.proxyYouTubeViews(ids: ids, token: token)
+            guard !stats.isEmpty else { return }
+            await MainActor.run { self?.reelViews.merge(stats) { _, new in new } }
+        }
+    }
+
+    /// View count for a reel, when we know one.
+    func views(for reel: Reel) -> Int? {
+        if case .youtube(let id) = reel.source { return reelViews[id] }
+        return nil
     }
 
     func isReelLiked(_ reel: Reel) -> Bool {

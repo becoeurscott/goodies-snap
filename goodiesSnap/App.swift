@@ -40,6 +40,8 @@ struct GoodiesSnapApp: App {
                             }
                         }
                     }
+                    // Disconnect: reset the app to a logged-out state and return to onboarding.
+                    social.onSignedOut = { [weak store] in store?.signedOut() }
                     purchases.onPlanChange = { [weak store] plan in store?.applyPurchasedPlan(plan) }
                     // Drop a stale/deleted persisted login before the UI trusts it.
                     await social.validateSession()
@@ -56,6 +58,18 @@ struct GoodiesSnapApp: App {
                         // pull their account state and merge it onto whatever is local.
                         await store.pullAndMergeServerState()
                     }
+
+                    #if DEBUG
+                    // Test-only launch hooks (via `simctl launch … -gsSignIn a:b -gsSeed -gsEnterApp`).
+                    // None of these compile into release builds.
+                    let args = ProcessInfo.processInfo.arguments
+                    if args.contains("-gsSeed") { store.debugSeedSampleRecipes() }
+                    if args.contains("-gsEnterApp") { store.debugEnterApp() }
+                    if let i = args.firstIndex(of: "-gsSignIn"), i + 1 < args.count {
+                        let creds = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+                        if creds.count == 2 { await social.signIn(email: creds[0], password: creds[1]) }
+                    }
+                    #endif
                 }
         }
     }

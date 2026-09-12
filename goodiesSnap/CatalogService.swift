@@ -73,16 +73,29 @@ enum CatalogService {
     /// Fetches a page of the catalog, newest first, optionally filtered by cuisine and a
     /// title search. Cuisine filtering happens server-side; search is a case-insensitive
     /// `ilike` so it stays cheap.
-    static func fetch(cuisine: String? = nil, search: String = "",
+    static func fetch(cuisines: Set<String> = [], categories: Set<String> = [], search: String = "",
+                      maxTime: Int? = nil, maxCal: Int? = nil,
                       limit: Int = 60, offset: Int = 0) async throws -> [Row] {
         var q = "select=*&published=eq.true&order=created_at.desc&limit=\(limit)&offset=\(offset)"
-        if let cuisine, !cuisine.isEmpty { q += "&cuisine=eq.\(cuisine)" }
+        if cuisines.count == 1, let c = cuisines.first { q += "&cuisine=eq.\(encodeValue(c))" }
+        else if cuisines.count > 1 { q += "&cuisine=in.(\(cuisines.sorted().map { encodeValue($0) }.joined(separator: ",")))" }
+        if categories.count == 1, let c = categories.first { q += "&category=eq.\(encodeValue(c))" }
+        else if categories.count > 1 { q += "&category=in.(\(categories.sorted().map { encodeValue($0) }.joined(separator: ",")))" }
+        if let maxTime { q += "&cook_minutes=lte.\(maxTime)" }
+        if let maxCal { q += "&calories_per_serving=lte.\(maxCal)" }
         let term = search.trimmingCharacters(in: .whitespaces)
         if !term.isEmpty {
-            let escaped = term.replacingOccurrences(of: " ", with: "%20")
-            q += "&title=ilike.*\(escaped)*"
+            q += "&title=ilike.*\(encodeValue(term))*"
         }
         return try await get("catalog_recipes", query: q)
+    }
+
+    /// The distinct food-type categories present, for the Discover filter's Food type facet.
+    static func categories() async throws -> [String] {
+        struct CategoryRow: Decodable { let category: String }
+        let rows: [CategoryRow] = try await get(
+            "catalog_recipes", query: "select=category&published=eq.true")
+        return Array(Set(rows.map(\.category).filter { !$0.isEmpty })).sorted()
     }
 
     /// The distinct cuisines present, for the filter chips. Uses PostgREST's distinct
@@ -160,9 +173,20 @@ enum CatalogService {
 
     // MARK: - Transport
 
+    /// Percent-encodes a dynamic value (a search term, a cuisine) so it is safe to drop into a
+    /// PostgREST query string. Only unreserved characters are kept; everything else — spaces,
+    /// accented letters, `&`, `%`, `(`… — is encoded. Non-ASCII input (e.g. a French search
+    /// like "crème") is exactly what used to trap `percentEncodedQuery` and crash the app.
+    private static let valueAllowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+    private static func encodeValue(_ s: String) -> String {
+        s.addingPercentEncoding(withAllowedCharacters: valueAllowed) ?? ""
+    }
+
     private static func get<T: Decodable>(_ table: String, query: String) async throws -> T {
         var comps = URLComponents(url: baseURL.appending(path: "/api/database/records/\(table)"),
                                   resolvingAgainstBaseURL: false)!
+        // Every dynamic value in `query` is already percent-encoded (see encodeValue), and the
+        // rest is ASCII structure, so this is a valid percent-encoded string and won't trap.
         comps.percentEncodedQuery = query
         var request = URLRequest(url: comps.url!)
         request.timeoutInterval = 30

@@ -38,6 +38,9 @@ struct LibraryView: View {
             if store.catalogCuisines.isEmpty {
                 store.catalogCuisines = (try? await CatalogService.cuisines()) ?? []
             }
+            if store.catalogCategories.isEmpty {
+                store.catalogCategories = (try? await CatalogService.categories()) ?? []
+            }
             await store.loadPopular()
         }
     }
@@ -221,11 +224,11 @@ struct LibraryView: View {
 
     private var cuisineChips: some View {
         HStack(spacing: 8) {
-            // Opens the full country/cuisine list — the horizontal pills only show a few.
+            // Opens the full filter — search by name, country and food type together.
             Button { showFilter = true } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "slider.horizontal.3").font(.system(size: 13, weight: .bold))
-                    if store.catalogCuisine != nil {
+                    if store.catalogFilterActive {
                         Circle().fill(Color.gsPeach).frame(width: 7, height: 7)
                     }
                 }
@@ -237,16 +240,18 @@ struct LibraryView: View {
                 .overlay(Capsule().strokeBorder(Color.gsFg.opacity(0.1), lineWidth: 1))
             }
             .buttonStyle(PressableStyle(scale: 0.95))
-            .accessibilityLabel("Filter by cuisine")
+            .accessibilityLabel("Filter recipes")
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    pill("All", active: store.catalogCuisine == nil) { store.setCatalogCuisine(nil) }
-                    // Selected cuisine floats to the front so it's always visible.
-                    if let sel = store.catalogCuisine {
-                        pill(sel, active: true) { store.setCatalogCuisine(nil) }
+                    pill("All", active: !store.catalogFilterActive) { store.clearCatalogFilters() }
+                    ForEach(Array(store.catalogCategory).sorted(), id: \.self) { food in
+                        pill(food, active: true) { store.setCatalogCategory(food) }
                     }
-                    ForEach(store.catalogCuisines.filter { $0 != store.catalogCuisine }, id: \.self) { c in
+                    ForEach(Array(store.catalogCuisine).sorted(), id: \.self) { sel in
+                        pill(sel, active: true) { store.setCatalogCuisine(sel) }
+                    }
+                    ForEach(store.catalogCuisines.filter { !store.catalogCuisine.contains($0) }, id: \.self) { c in
                         pill(c, active: false) { store.setCatalogCuisine(c) }
                     }
                 }
@@ -254,10 +259,7 @@ struct LibraryView: View {
             }
         }
         .sheet(isPresented: $showFilter) {
-            CuisineFilterSheet(
-                cuisines: store.catalogCuisines,
-                selected: store.catalogCuisine,
-                onSelect: { store.setCatalogCuisine($0); showFilter = false })
+            RecipeFilterSheet().environmentObject(store)
         }
     }
 
@@ -328,6 +330,7 @@ struct LibraryView: View {
                     .font(nunito(13, .bold))
                     .foregroundStyle(Color.gsMuted)
                 Spacer()
+                filtersButton
             }
             .padding(.top, 16)
 
@@ -343,6 +346,38 @@ struct LibraryView: View {
                 .padding(.top, 12)
                 .animation(AppStore.lateralAnimation, value: store.filtered)
             }
+        }
+    }
+
+    /// Opens the filter sheet (cooking time, difficulty, calories). Badges the active count.
+    private var filtersButton: some View {
+        Button {
+            Haptics.tap(.light)
+            store.showFilters = true
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 12, weight: .bold))
+                Text("Filters").font(nunito(13, .extrabold))
+                if store.activeFilterCount > 0 {
+                    Text("\(store.activeFilterCount)")
+                        .font(nunito(11, .black))
+                        .foregroundStyle(Color.white)
+                        .frame(width: 18, height: 18)
+                        .background(Color.gsDock)
+                        .clipShape(Circle())
+                }
+            }
+            .foregroundStyle(Color.gsFg)
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background(Color.gsCard)
+            .clipShape(Capsule())
+            .overlay(Capsule().strokeBorder(Color.gsFg.opacity(0.12), lineWidth: 1))
+        }
+        .buttonStyle(PressableStyle(scale: 0.95))
+        .sheet(isPresented: $store.showFilters) {
+            FilterSheet().environmentObject(store)
         }
     }
 
@@ -637,85 +672,147 @@ struct FavButton: View {
 
 /// Full list of cuisines/countries to filter Discover by — every country in the catalog,
 /// searchable, since the horizontal pills only surface a handful.
-struct CuisineFilterSheet: View {
+/// The Discover filter: search by name, country and food type in one place. Selections apply
+/// live to the catalog; "Clear all" resets every facet.
+struct RecipeFilterSheet: View {
+    @EnvironmentObject var store: AppStore
     @Environment(\.dismiss) private var dismiss
-    let cuisines: [String]
-    let selected: String?
-    let onSelect: (String?) -> Void
 
-    @State private var query = ""
+    /// Local mirror of the name query so typing feels instant; committed on submit / Show.
+    @State private var name = ""
 
-    private var filtered: [String] {
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        return q.isEmpty ? cuisines : cuisines.filter { $0.lowercased().contains(q) }
-    }
-
-    private let cols = [GridItem(.adaptive(minimum: 150), spacing: 10)]
+    private let cols = [GridItem(.adaptive(minimum: 110), spacing: 10)]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("Filter by cuisine").font(nunito(22, .black))
+                Text("Filters").font(nunito(22, .black))
                 Spacer()
+                if store.catalogFilterActive {
+                    Button("Clear all") {
+                        name = ""
+                        store.clearCatalogFilters()
+                    }
+                    .font(nunito(13, .extrabold))
+                    .foregroundStyle(Color.gsAccentInk)
+                }
                 Button { dismiss() } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 24))
-                        .foregroundStyle(Color.gsMuted)
+                        .font(.system(size: 24)).foregroundStyle(Color.gsMuted)
                 }
                 .buttonStyle(.plain)
+                .padding(.leading, 10)
             }
-            .padding(.top, 24)
+            .padding(.top, 22)
+            .padding(.bottom, 14)
 
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass").foregroundStyle(Color.gsMuted)
-                TextField("", text: $query,
-                          prompt: Text("Search countries").foregroundStyle(Color.gsMuted))
+                TextField("", text: $name,
+                          prompt: Text("Search by name").foregroundStyle(Color.gsMuted))
                     .font(nunito(15, .semibold))
                     .autocorrectionDisabled()
+                    .submitLabel(.search)
+                    .onSubmit { commitName() }
+                if !name.isEmpty {
+                    Button { name = ""; commitName() } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(Color.gsMuted)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             .padding(.horizontal, 16).frame(height: 48)
             .background(Color.gsFill)
             .clipShape(Capsule())
 
             ScrollView {
-                LazyVGrid(columns: cols, spacing: 10) {
-                    row("All cuisines", isSelected: selected == nil) { onSelect(nil) }
-                    ForEach(filtered, id: \.self) { c in
-                        row(c, isSelected: selected == c) { onSelect(c) }
-                    }
+                VStack(alignment: .leading, spacing: 18) {
+                    multiSection("Food type", options: store.catalogCategories,
+                               selected: store.catalogCategory) { store.setCatalogCategory($0) }
+                    multiSection("Country", options: store.catalogCuisines,
+                                selected: store.catalogCuisine) { store.setCatalogCuisine($0) }
+
+                    rangeSection("Cooking time", choices: [
+                        ("Any", nil), ("≤ 15 min", 15), ("≤ 30 min", 30), ("≤ 60 min", 60)
+                    ], selected: store.catalogMaxTime) { store.setCatalogMaxTime($0) }
+
+                    rangeSection("Calories per serving", choices: [
+                        ("Any", nil), ("≤ 300", 300), ("≤ 500", 500), ("≤ 700", 700)
+                    ], selected: store.catalogMaxCal) { store.setCatalogMaxCal($0) }
                 }
-                .padding(.vertical, 2)
+                .padding(.top, 18)
+                .padding(.bottom, 8)
             }
+
+            Button {
+                commitName()
+                dismiss()
+            } label: {
+                Text(store.catalogLoading ? "Filtering…" : "Show recipes")
+                    .font(nunito(15, .extrabold)).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, minHeight: 54)
+            }
+            .buttonStyle(DarkButtonStyle())
+            .padding(.bottom, 8)
         }
         .padding(.horizontal, 22)
         .background(Color.gsBg.ignoresSafeArea())
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
+        .onAppear { name = store.catalogSearch }
     }
 
-    private func row(_ label: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+    private func commitName() {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard trimmed != store.catalogSearch else { return }
+        store.catalogSearch = trimmed
+        store.searchCatalog()
+    }
+
+    /// A titled facet: an "Any" chip plus one chip per option. Tapping toggles the facet.
+    @ViewBuilder
+    private func multiSection(_ title: String, options: [String], selected: Set<String>,
+                              toggle: @escaping (String?) -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(nunito(15, .extrabold)).foregroundStyle(Color.gsFg)
+            LazyVGrid(columns: cols, spacing: 10) {
+                chip("Any", isSelected: selected.isEmpty) { toggle(nil) }
+                ForEach(options, id: \.self) { opt in
+                    chip(opt, isSelected: selected.contains(opt)) { toggle(opt) }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func rangeSection(_ title: String, choices: [(String, Int?)],
+                              selected: Int?, set: @escaping (Int?) -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(nunito(15, .extrabold)).foregroundStyle(Color.gsFg)
+            LazyVGrid(columns: cols, spacing: 10) {
+                ForEach(Array(choices.enumerated()), id: \.offset) { _, pair in
+                    chip(pair.0, isSelected: selected == pair.1) { set(pair.1) }
+                }
+            }
+        }
+    }
+
+    private func chip(_ label: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button {
             Haptics.tap(.light)
             action()
         } label: {
-            HStack {
-                Text(label)
-                    .font(nunito(14, isSelected ? .extrabold : .semibold))
-                    .foregroundStyle(isSelected ? Color.white : Color.gsFg)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                if isSelected {
-                    Image(systemName: "checkmark").font(.system(size: 12, weight: .black))
-                        .foregroundStyle(Color.white)
-                }
-            }
-            .padding(.horizontal, 14).frame(height: 46)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isSelected ? Color.gsDock : Color.gsCard)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.gsFg.opacity(isSelected ? 0 : 0.1), lineWidth: 1))
+            Text(label)
+                .font(nunito(13, isSelected ? .extrabold : .semibold))
+                .foregroundStyle(isSelected ? Color.white : Color.gsFg)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 10).frame(height: 40)
+                .background(isSelected ? Color.gsDock : Color.gsCard)
+                .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .strokeBorder(Color.gsFg.opacity(isSelected ? 0 : 0.1), lineWidth: 1))
         }
-        .buttonStyle(PressableStyle(scale: 0.97))
+        .buttonStyle(PressableStyle(scale: 0.96))
     }
 }
 
@@ -833,5 +930,147 @@ struct SavedCard: View {
         .padding(.horizontal, 8).padding(.vertical, 4)
         .background(Color.gsPeachSoft)
         .clipShape(Capsule())
+    }
+}
+
+// MARK: - Filter sheet
+
+/// Extra filters for the Saved tab: cooking time, difficulty, calories, and type of food.
+/// Cuisine ("type of food") drives the same `store.chip` as the pill row, so the two stay
+/// in sync. The time/difficulty/calorie bands live in their own AppStore state.
+struct FilterSheet: View {
+    @EnvironmentObject var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 26) {
+                    section("Cooking time") {
+                        wrap(AppStore.TimeBand.allCases.map(\.rawValue),
+                             isOn: { $0 == store.timeBand.rawValue }) { raw in
+                            if let band = AppStore.TimeBand(rawValue: raw) {
+                                withAnimation(AppStore.lateralAnimation) { store.timeBand = band }
+                            }
+                        }
+                    }
+
+                    section("Difficulty") {
+                        wrap(["Any"] + AppStore.difficultyOptions,
+                             isOn: { $0 == (store.difficultyFilter ?? "Any") }) { name in
+                            withAnimation(AppStore.lateralAnimation) {
+                                store.difficultyFilter = (name == "Any") ? nil : name
+                            }
+                        }
+                    }
+
+                    section("Calories per serving") {
+                        wrap(AppStore.CalBand.allCases.map(\.rawValue),
+                             isOn: { $0 == store.calBand.rawValue }) { raw in
+                            if let band = AppStore.CalBand(rawValue: raw) {
+                                withAnimation(AppStore.lateralAnimation) { store.calBand = band }
+                            }
+                        }
+                    }
+
+                    section("Type of food") {
+                        wrap(store.chipNames, isOn: { $0 == store.chip }) { name in
+                            withAnimation(AppStore.lateralAnimation) { store.chip = name }
+                        }
+                    }
+                }
+                .padding(20)
+            }
+            .navigationTitle("Filters")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Reset") { store.clearFilters(); store.chip = "All" }
+                        .font(nunito(14, .bold))
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                        .font(nunito(14, .extrabold))
+                }
+            }
+        }
+    }
+
+    private func section<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title.uppercased())
+                .font(nunito(11, .black))
+                .tracking(1.4)
+                .foregroundStyle(Color.gsMuted)
+            content()
+        }
+    }
+
+    /// A wrapping run of selectable chips.
+    private func wrap(_ options: [String], isOn: @escaping (String) -> Bool,
+                      select: @escaping (String) -> Void) -> some View {
+        FlexChips(options: options, isOn: isOn, select: select)
+    }
+}
+
+/// Chips that wrap onto multiple lines (a lightweight flow layout).
+private struct FlexChips: View {
+    let options: [String]
+    let isOn: (String) -> Bool
+    let select: (String) -> Void
+
+    var body: some View {
+        FlowLayout(spacing: 8, lineSpacing: 8) {
+            ForEach(options, id: \.self) { name in
+                let active = isOn(name)
+                Button {
+                    Haptics.tap(.light)
+                    select(name)
+                } label: {
+                    Text(name)
+                        .font(nunito(13, active ? .extrabold : .semibold))
+                        .foregroundStyle(active ? Color.white : Color.gsFg)
+                        .padding(.horizontal, 14)
+                        .frame(height: 38)
+                        .background(active ? Color.gsDock : Color.gsCard)
+                        .clipShape(Capsule())
+                        .overlay(Capsule().strokeBorder(Color.gsFg.opacity(active ? 0 : 0.12), lineWidth: 1))
+                }
+                .buttonStyle(PressableStyle(scale: 0.95))
+            }
+        }
+    }
+}
+
+/// Minimal flow layout: lays children left-to-right, wrapping to the next line as needed.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+    var lineSpacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, lineHeight: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x + size.width > maxWidth, x > 0 {
+                x = 0; y += lineHeight + lineSpacing; lineHeight = 0
+            }
+            x += size.width + spacing
+            lineHeight = max(lineHeight, size.height)
+        }
+        return CGSize(width: maxWidth == .infinity ? x : maxWidth, height: y + lineHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, lineHeight: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x + size.width > bounds.maxX, x > bounds.minX {
+                x = bounds.minX; y += lineHeight + lineSpacing; lineHeight = 0
+            }
+            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            lineHeight = max(lineHeight, size.height)
+        }
     }
 }

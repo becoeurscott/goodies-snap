@@ -73,9 +73,6 @@ struct ImportView: View {
                 inputCard
                     .padding(.top, 14)
 
-                pillButton("Try a sample YouTube link") { store.fillSample() }
-                    .padding(.top, 12)
-
                 quotaBar
                     .padding(.top, 14)
 
@@ -171,17 +168,6 @@ struct ImportView: View {
         .softCard(radius: 22)
     }
 
-    private func pillButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(nunito(12.5, .bold))
-                .frame(maxWidth: .infinity, minHeight: 48)
-                .background(Color.gsCard)
-                .clipShape(Capsule())
-                .overlay(Capsule().strokeBorder(Color.fg(0.16), lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-    }
 }
 
 struct NumberedRow: View {

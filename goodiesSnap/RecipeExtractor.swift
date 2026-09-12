@@ -95,7 +95,7 @@ enum RecipeExtractor {
         } else if trimmed.range(of: #"^https?://"#, options: [.regularExpression, .caseInsensitive]) != nil {
             let page = try await fetchPage(url: trimmed)
             imageURL = ogImage(of: page)
-            content = "Recipe web page content:\n" + plainText(of: page)
+            content = webContent(page: page, url: trimmed)
         }
 
         // 20k chars covers any real recipe page. The cap matters commercially, not just
@@ -605,7 +605,7 @@ enum RecipeExtractor {
         } else if trimmed.range(of: #"^https?://"#, options: [.regularExpression, .caseInsensitive]) != nil {
             let page = try await fetchPage(url: trimmed)
             imageURL = ogImage(of: page)
-            content = "Recipe web page content:\n" + plainText(of: page)
+            content = webContent(page: page, url: trimmed)
         }
 
         let result = try await callProxy(
@@ -659,6 +659,17 @@ enum RecipeExtractor {
         return (try? JSONDecoder().decode(Wire.self, from: result.value))?.image
     }
 
+    /// Batched YouTube view counts for reel videos, through the proxy so the key stays
+    /// server-side. Costs no AI action; returns [:] on any failure.
+    static func proxyYouTubeViews(ids: [String], token: String) async -> [String: Int] {
+        guard !ids.isEmpty else { return [:] }
+        guard let result = try? await callProxy(
+            body: ["action": "youtube_stats", "ids": Array(ids.prefix(50))], token: token
+        ) else { return [:] }
+        struct Wire: Decodable { let stats: [String: Int] }
+        return (try? JSONDecoder().decode(Wire.self, from: result.value))?.stats ?? [:]
+    }
+
     // MARK: - Page fetching & HTML utilities
 
     private static func fetchPage(url: String) async throws -> String {
@@ -695,6 +706,38 @@ enum RecipeExtractor {
             }
         }
         return nil
+    }
+
+    /// The social platform a URL belongs to, if any — used both to label the import and to
+    /// route to caption-based extraction (these posts hide the recipe in the caption, not the
+    /// page body).
+    static func socialPlatform(for url: String) -> String? {
+        let u = url.lowercased()
+        if u.contains("instagram.com") { return "Instagram" }
+        if u.contains("tiktok.com") { return "TikTok" }
+        if u.contains("facebook.com") || u.contains("fb.watch") || u.contains("fb.com") { return "Facebook" }
+        if u.contains("pinterest.") || u.contains("pin.it") { return "Pinterest" }
+        if u.contains("threads.net") { return "Threads" }
+        if u.contains("reddit.com") { return "Reddit" }
+        return nil
+    }
+
+    /// Builds the text handed to the model for a fetched web/social page. Recipe blogs put the
+    /// recipe in the body; social posts (Instagram/TikTok/…) put it in the caption, which is in
+    /// the page's `og:description` meta — the body is a login/JS shell — so those lead with the
+    /// caption metadata and a hint.
+    private static func webContent(page: String, url: String) -> String {
+        if let platform = socialPlatform(for: url) {
+            return """
+            \(platform) post. The recipe is usually written in the post's caption. Reconstruct the \
+            full recipe from the caption below; ignore navigation, "log in" prompts and boilerplate. \
+            If the caption has no recipe, say so rather than inventing one.
+            \(metaSummary(of: page))
+
+            \(plainText(of: page))
+            """
+        }
+        return "Recipe web page content:\n" + plainText(of: page)
     }
 
     private static func metaSummary(of html: String) -> String {

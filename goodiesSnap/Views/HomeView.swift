@@ -12,6 +12,42 @@ struct HomeView: View {
                 HighlightStrip()
                     .padding(.top, 16)
 
+                if !store.recentRecipes.isEmpty {
+                    sectionHeader("Jump back in", count: nil, action: nil) {}
+                        .padding(.top, 20)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(store.recentRecipes) { r in
+                                Button { store.open(r) } label: {
+                                    HStack(spacing: 10) {
+                                        AsyncImage(url: URL(string: r.img)) { img in
+                                            img.resizable().scaledToFill()
+                                        } placeholder: { Color.gsFill }
+                                            .frame(width: 48, height: 48)
+                                            .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(r.title).font(nunito(13, .bold))
+                                                .foregroundStyle(Color.gsFg)
+                                                .lineLimit(1)
+                                            Text("\(r.totalMinutes) min")
+                                                .font(nunito(11, .regular))
+                                                .foregroundStyle(Color.gsMuted)
+                                        }
+                                    }
+                                    .padding(8)
+                                    .background(Color.gsFill)
+                                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 2)
+                    }
+                    .padding(.horizontal, -2)
+                    .padding(.top, 4)
+                }
+
                 // Personalized to the onboarding taste profile, pulled from the catalog.
                 if !store.recommended.isEmpty {
                     sectionHeader("Picked for your taste", count: nil, action: "More") {

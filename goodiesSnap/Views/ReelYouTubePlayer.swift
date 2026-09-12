@@ -59,7 +59,6 @@ struct ReelYouTubePlayer: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var ready = false
-        var didSignalReady = false
         var pendingActive = false
         var pendingMuted = true
         var onReady: () -> Void
@@ -79,11 +78,11 @@ struct ReelYouTubePlayer: UIViewRepresentable {
             }
         }
 
-        /// The HTML posts here on the first PLAYING state. Poster timing for YouTube reels is
-        /// owned by the cell (which re-covers on every activation), so this just forwards.
+        /// The HTML posts here on every PLAYING transition. The cell re-covers the poster on
+        /// each activation, so forwarding every PLAYING (not just the first) lets it lift the
+        /// poster the moment playback actually resumes.
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard message.name == "reelReady", !didSignalReady else { return }
-            didSignalReady = true
+            guard message.name == "reelReady" else { return }
             onReady()
         }
     }

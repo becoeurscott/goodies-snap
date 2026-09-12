@@ -260,7 +260,8 @@ struct ReelProfileView: View {
             HStack(spacing: 4) {
                 Image(systemName: "play.fill")
                     .font(.system(size: 9, weight: .black))
-                Text(reel.likeCount.compactCount)
+                // Uploaded reels have no view counter of their own, so they show likes.
+                Text((social.views(for: reel) ?? reel.likeCount).compactCount)
                     .font(nunito(11, .black))
             }
             .foregroundStyle(.white)

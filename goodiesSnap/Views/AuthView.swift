@@ -89,12 +89,15 @@ struct AuthView: View {
                 .foregroundStyle(Color.gsFg)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
+                .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.top, 12)
             Text(subtitle)
                 .font(nunito(12.5, .semibold))
                 .foregroundStyle(Color.gsMuted)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.top, 4)
 
             fields

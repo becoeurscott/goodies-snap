@@ -117,9 +117,9 @@ struct DiscoverView: View {
     private var cuisineChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                chip("All", active: store.catalogCuisine == nil) { store.setCatalogCuisine(nil) }
+                chip("All", active: store.catalogCuisine.isEmpty) { store.setCatalogCuisine(nil) }
                 ForEach(store.catalogCuisines, id: \.self) { c in
-                    chip(c, active: store.catalogCuisine == c) { store.setCatalogCuisine(c) }
+                    chip(c, active: store.catalogCuisine.contains(c)) { store.setCatalogCuisine(c) }
                 }
             }
             .padding(.horizontal, 2)

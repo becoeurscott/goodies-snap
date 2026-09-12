@@ -12,9 +12,9 @@ struct MealPlanView: View {
                         Text("This week")
                             .font(nunito(29, .black))
                             .tracking(-0.6)
-                        Text(store.plannedCount == 0
-                             ? "No dinners planned yet"
-                             : "\(store.plannedCount) of \(AppStore.days.count) dinners planned")
+                        Text(store.planRangeLabel + (store.plannedCount == 0
+                             ? " · no dinners planned"
+                             : " · \(store.plannedCount) of \(AppStore.days.count) planned"))
                             .font(nunito(13, .semibold))
                             .foregroundStyle(Color.gsMuted)
                     }
@@ -30,8 +30,8 @@ struct MealPlanView: View {
                 }
 
                 VStack(spacing: 0) {
-                    ForEach(Array(AppStore.days.enumerated()), id: \.element) { i, day in
-                        DayRow(day: day, date: AppStore.weekDates[i])
+                    ForEach(Array(store.planDays.enumerated()), id: \.offset) { _, entry in
+                        DayRow(day: entry.day, date: entry.date, isToday: entry.isToday)
                     }
                 }
                 .padding(.top, 8)
@@ -47,6 +47,7 @@ struct DayRow: View {
     @EnvironmentObject var store: AppStore
     let day: String
     let date: Int
+    var isToday: Bool = false
 
     private var recipe: Recipe? {
         store.plan[day].flatMap { id in store.recipes.first { $0.id == id } }
@@ -61,13 +62,14 @@ struct DayRow: View {
                 Text("\(date)")
                     .font(nunito(16, .extrabold))
             }
-            .foregroundStyle(recipe != nil ? Color.gsFg : Color.gsMuted)
+            .foregroundStyle(recipe != nil ? Color.gsFg : (isToday ? Color.gsAccentInk : Color.gsMuted))
             .frame(width: 46, height: 46)
-            .background(recipe != nil ? Color.gsPeach : Color.gsCard)
+            .background(recipe != nil ? Color.gsPeach : (isToday ? Color.gsPeachSoft : Color.gsCard))
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(Color.clear, lineWidth: 0)
+                    .strokeBorder(isToday && recipe == nil ? Color.gsPeach.opacity(0.6) : Color.clear,
+                                  lineWidth: 1.5)
             )
 
             if let r = recipe {

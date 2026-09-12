@@ -208,8 +208,12 @@ async function googleImage(dish: string): Promise<{ image: string | null; reache
   url.searchParams.set('imgSize', 'large');
   url.searchParams.set('num', '3');
   url.searchParams.set('safe', 'active');
-  // Only images the licence allows us to reuse.
-  url.searchParams.set('rights', 'cc_publicdomain|cc_attribute|cc_sharealike');
+  // NOTE: no `rights` filter here on purpose. Google closed whole-web search to new
+  // Programmable Search Engines in Jan 2026, so this engine is scoped to a fixed list of
+  // free-photo domains (Wikimedia Commons, Unsplash, Pexels, Pixabay) — **the domain
+  // allowlist is what makes the results reusable**. Re-adding `rights=cc_*` would be worse
+  // than useless: Unsplash, Pexels and Pixabay images are under their own licences, not
+  // Creative Commons, so the filter would throw away almost everything the engine returns.
 
   try {
     const res = await fetch(url.toString());
@@ -225,6 +229,41 @@ async function googleImage(dish: string): Promise<{ image: string | null; reache
   } catch (err) {
     console.error('google image search threw:', err);
     return { image: null, reached: false };
+  }
+}
+
+/**
+ * Batched YouTube view counts, cached in Postgres.
+ *
+ * One `videos.list` call covers up to 50 ids and costs a single quota unit out of the free
+ * 10,000/day, so the whole feed is one request. Returns {} rather than throwing when the key
+ * is unset or the call fails — a missing view count must never break the feed.
+ */
+async function youtubeViews(ids: string[]): Promise<Record<string, number>> {
+  const key = Deno.env.get('YOUTUBE_API_KEY');
+  if (!key || ids.length === 0) return {};
+
+  const url = new URL('https://www.googleapis.com/youtube/v3/videos');
+  url.searchParams.set('key', key);
+  url.searchParams.set('part', 'statistics');
+  url.searchParams.set('id', ids.slice(0, 50).join(','));
+
+  try {
+    const res = await fetch(url.toString());
+    if (!res.ok) {
+      console.error('youtube stats failed:', res.status, await res.text());
+      return {};
+    }
+    const body = await res.json();
+    const out: Record<string, number> = {};
+    for (const item of body.items ?? []) {
+      const views = Number(item?.statistics?.viewCount ?? 0);
+      if (item?.id && Number.isFinite(views)) out[item.id] = views;
+    }
+    return out;
+  } catch (err) {
+    console.error('youtube stats threw:', err);
+    return {};
   }
 }
 
@@ -260,6 +299,37 @@ export default async function (req: Request): Promise<Response> {
   // user an AI action to fetch a thumbnail would be indefensible. It is billed per query
   // though ($5/1000), so it goes through a shared cache first and only ever reaches Google
   // on a genuine miss.
+  // View counts are a read of public YouTube metadata, not a model call — outside the meter,
+  // like artwork. Cache first, and only the stale/missing ids reach Google.
+  if (action === 'youtube_stats') {
+    const ids: string[] = Array.isArray(req_body.ids)
+      ? req_body.ids.map((v: unknown) => String(v)).filter((v: string) => /^[A-Za-z0-9_-]{11}$/.test(v)).slice(0, 50)
+      : [];
+    if (ids.length === 0) return json({ data: { stats: {} } });
+
+    const stats: Record<string, number> = {};
+    const { data: cached } = await client.database
+      .rpc('get_youtube_stats', { p_ids: ids, p_max_age: '24 hours' });
+    for (const row of (Array.isArray(cached) ? cached : [])) {
+      if (row?.video_id) stats[row.video_id] = Number(row.view_count ?? 0);
+    }
+
+    const missing = ids.filter((id) => stats[id] === undefined);
+    if (missing.length > 0) {
+      const fresh = await youtubeViews(missing);
+      const freshIDs = Object.keys(fresh);
+      if (freshIDs.length > 0) {
+        await client.database.rpc('cache_youtube_stats', {
+          p_ids: freshIDs,
+          p_views: freshIDs.map((id) => fresh[id]),
+        });
+        Object.assign(stats, fresh);
+      }
+    }
+
+    return json({ data: { stats } });
+  }
+
   if (action === 'image_search') {
     const dish: string = String(req_body.dish ?? '').slice(0, 120);
     const key = dishKey(dish);

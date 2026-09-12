@@ -4,8 +4,8 @@ import UIKit
 
 @MainActor
 final class AppStore: ObservableObject {
-    enum Phase { case splash, onboard, preferences, createAccount, preparing, app }
-    enum Screen { case home, importer, scanIdentify, scanResults, library, detail, cook, shopping, basket, plan, profile, feed, discover, reviews, reelProfile, paywall, auth }
+    enum Phase { case splash, welcome, onboard, preferences, createAccount, preparing, app }
+    enum Screen { case home, importer, scanIdentify, scanResults, library, detail, cook, shopping, basket, plan, profile, feed, discover, reelProfile, paywall, auth }
 
     /// Which way the next screen change should animate.
     enum NavDirection { case forward, backward, lateral }
@@ -15,7 +15,7 @@ final class AppStore: ObservableObject {
         switch screen {
         // Meal plan is a tab root now, so it sits at depth 0 with the other tabs.
         case .home, .importer, .library, .shopping, .plan: return 0
-        case .scanIdentify, .scanResults, .detail, .profile, .feed, .discover, .basket, .reviews: return 1
+        case .scanIdentify, .scanResults, .detail, .profile, .feed, .discover, .basket: return 1
         case .reelProfile: return 2
         case .cook, .paywall, .auth: return 2
         }
@@ -34,6 +34,10 @@ final class AppStore: ObservableObject {
     /// Screen a pushed recipe detail returns to, so back lands where the tap came from.
     @Published private(set) var detailReturn: Screen = .library
     @Published var selId: String?
+    /// Recently opened recipe ids, most-recent first. Persisted; drives Home's "Jump back in"
+    /// resume card and "Recently viewed" row (requested by users importing from many sources).
+    @Published var recentIDs: [String] = []
+    private static let recentLimit = 12
 
     // MARK: Discover (server recipe catalog)
     @Published var catalog: [Recipe] = []
@@ -41,43 +45,87 @@ final class AppStore: ObservableObject {
     /// until people share recipes; the view falls back to featured catalog dishes.
     @Published var popular: [Recipe] = []
     @Published var catalogCuisines: [String] = []
-    @Published var catalogCuisine: String? = nil
+    /// Selected countries — multi-select, so several can be active at once.
+    @Published var catalogCuisine: Set<String> = []
+    @Published var catalogCategories: [String] = []
+    /// Selected food types — multi-select.
+    @Published var catalogCategory: Set<String> = []
     @Published var catalogSearch = ""
+    @Published var catalogMaxTime: Int? = nil
+    @Published var catalogMaxCal: Int? = nil
+
+    var catalogFilterActive: Bool {
+        !catalogCuisine.isEmpty || !catalogCategory.isEmpty
+            || !catalogSearch.trimmingCharacters(in: .whitespaces).isEmpty
+            || catalogMaxTime != nil || catalogMaxCal != nil
+    }
+    var catalogFilterCount: Int {
+        catalogCuisine.count + catalogCategory.count
+            + (catalogMaxTime != nil ? 1 : 0) + (catalogMaxCal != nil ? 1 : 0)
+    }
     @Published var catalogLoading = false
 
     /// Recipes recommended from the catalog for the user's taste profile, shown on Home.
     @Published var recommended: [Recipe] = []
     @Published var recommendedLoading = false
 
-    // MARK: Reviews (recipe ratings)
-    @Published var reviews: [RecipeReview] = []
-    @Published var reviewsLoading = false
-    /// The recipe key the loaded reviews belong to, so we don't show stale reviews.
-    @Published var reviewsRecipeKey: String?
-    @Published var writingReview = false
-    /// Rating filter on the "all reviews" screen (nil = all stars).
-    @Published var reviewFilter: Int? = nil
-    /// A review being reported, driving the report sheet on the reviews screen.
-    @Published var reportingReview: RecipeReview?
-
-    var myReview: RecipeReview? { reviews.first { $0.user_id == currentUserID } }
-    var reviewCount: Int { reviews.count }
-    var averageRating: Double {
-        guard !reviews.isEmpty else { return 0 }
-        return Double(reviews.reduce(0) { $0 + $1.rating }) / Double(reviews.count)
-    }
-    var filteredReviews: [RecipeReview] {
-        guard let f = reviewFilter else { return reviews }
-        return reviews.filter { $0.rating == f }
-    }
-    /// Count of reviews at each star level, for the filter chips (index 0 = 1★ … 4 = 5★).
-    var ratingBuckets: [Int] {
-        (1...5).map { star in reviews.filter { $0.rating == star }.count }
-    }
     /// Ids already saved to the library, so Discover can show a "Saved ✓" state.
     var isInLibrary: (String) -> Bool { { [weak self] id in self?.recipes.contains { $0.id == id } ?? false } }
     @Published var search = ""
     @Published var chip = "All"
+
+    // MARK: Library filters (cooking time / difficulty / calories, on the Saved tab)
+
+    /// Cooking-time band a recipe's total time must fall in.
+    enum TimeBand: String, CaseIterable, Identifiable {
+        case any = "Any time", under15 = "≤ 15 min", under30 = "≤ 30 min", under45 = "≤ 45 min", over60 = "60 min +"
+        var id: String { rawValue }
+        func matches(_ minutes: Int) -> Bool {
+            switch self {
+            case .any: return true
+            case .under15: return minutes <= 15
+            case .under30: return minutes <= 30
+            case .under45: return minutes <= 45
+            case .over60: return minutes >= 60
+            }
+        }
+    }
+
+    /// Calories-per-serving band.
+    enum CalBand: String, CaseIterable, Identifiable {
+        case any = "Any", under300 = "≤ 300", under500 = "≤ 500", under700 = "≤ 700", over700 = "700 +"
+        var id: String { rawValue }
+        func matches(_ cal: Int) -> Bool {
+            switch self {
+            case .any: return true
+            case .under300: return cal <= 300
+            case .under500: return cal <= 500
+            case .under700: return cal <= 700
+            case .over700: return cal >= 700
+            }
+        }
+    }
+
+    static let difficultyOptions = ["Easy", "Medium", "Hard"]
+
+    @Published var showFilters = false
+    @Published var timeBand: TimeBand = .any
+    @Published var calBand: CalBand = .any
+    @Published var difficultyFilter: String? = nil
+
+    /// How many of the extra (sheet) filters are active — drives the badge on the Filters button.
+    var activeFilterCount: Int {
+        (timeBand != .any ? 1 : 0) + (calBand != .any ? 1 : 0) + (difficultyFilter != nil ? 1 : 0)
+    }
+
+    func clearFilters() {
+        withAnimation(Self.lateralAnimation) {
+            timeBand = .any
+            calBand = .any
+            difficultyFilter = nil
+        }
+    }
+
     @Published var importText = ""
     @Published var importing = false
     @Published var preview: Recipe?
@@ -114,8 +162,7 @@ final class AppStore: ObservableObject {
     /// Access token for the signed-in InsForge user, mirrored from `SocialStore` by `RootView`.
     /// Its presence is what lets AI calls use the metered server proxy.
     @Published var aiToken: String?
-    /// The signed-in user's id, mirrored from SocialStore by RootView — lets the app tell
-    /// which review is the current user's own.
+    /// The signed-in user's id, mirrored from SocialStore by RootView.
     @Published var currentUserID: String?
 
     /// True when AI work can run server-side, where the key lives and the quota is enforced.
@@ -214,7 +261,14 @@ final class AppStore: ObservableObject {
     /// Adopts the balance the server reported after a metered call.
     func applyServerQuota(remaining: Int, plan: String) {
         if let serverPlan = Entitlement.Plan(rawValue: plan), serverPlan != entitlement.plan {
+            #if DEBUG
+            // A DEBUG-only local unlock (used when StoreKit products can't load, e.g. the
+            // plain simulator) must not be reverted by the server, which still says "free"
+            // because no real receipt was submitted. Compiled out of release entirely.
+            if !debugPlanUnlocked { entitlement.plan = serverPlan }
+            #else
             entitlement.plan = serverPlan
+            #endif
         }
         entitlement.syncRemaining(remaining)
         persistEntitlement()
@@ -228,7 +282,11 @@ final class AppStore: ObservableObject {
     func refreshServerEntitlement(token: String) async {
         guard let server = try? await SocialAPI.fetchEntitlement(token: token) else { return }
         if let plan = Entitlement.Plan(rawValue: server.plan) {
+            #if DEBUG
+            if !debugPlanUnlocked { entitlement.plan = plan }
+            #else
             entitlement.plan = plan
+            #endif
         }
         entitlement.period = server.period
         entitlement.used = max(0, server.used)
@@ -310,9 +368,79 @@ final class AppStore: ObservableObject {
     func authenticationSucceeded(newAccount: Bool = false) {
         isAuthenticated = true
         welcome = newAccount ? .newAccount : .returning
-        screen = .home                     // land on Home after the welcome, never back on auth
-        withAnimation(.easeOut(duration: 0.4)) { phase = .preparing }
+        screen = .home
+        withAnimation(.easeOut(duration: 0.4)) {
+            if !preferences.isComplete {
+                phase = .preferences
+            } else {
+                phase = .preparing
+            }
+        }
     }
+
+    /// Called when the user disconnects. Drops their token, cancels any pending sync, wipes
+    /// this device's personal data (it lives on their account and would otherwise leak to the
+    /// next person to sign in here), and returns to onboarding so the app is genuinely logged out.
+    func signedOut() {
+        isAuthenticated = false
+        aiToken = nil
+        currentUserID = nil
+        syncPushTask?.cancel()
+        welcome = nil
+        // Clear per-user state so a second account on this device starts clean.
+        recipes = []
+        shopping = []
+        plan = [:]
+        userName = ""
+        preferences = UserPreferences()
+        entitlement = Entitlement()
+        selId = nil
+        openedRecipe = nil
+        persistEntitlement()
+        persistLocalOnly()
+        screen = .home
+        authReason = .general
+        withAnimation(.easeOut(duration: 0.4)) { phase = .createAccount }
+    }
+
+    /// Saves the local snapshot to UserDefaults WITHOUT pushing to the server — used on
+    /// sign-out, where there's no longer a session to sync to.
+    private func persistLocalOnly() {
+        if let data = try? JSONEncoder().encode(snapshot) {
+            UserDefaults.standard.set(data, forKey: Self.storeKey)
+        }
+    }
+
+    #if DEBUG
+    /// Jumps straight into the app, bypassing onboarding/preferences/sign-in. Launch-arg only
+    /// (`-gsEnterApp`), for verifying in-app screens without walking the whole first-run flow.
+    func debugEnterApp() {
+        phase = .app
+        screen = .home
+    }
+
+    /// Seeds a spread of local recipes (varied time / calories / cuisine / difficulty) so the
+    /// Library filters and the recently-viewed row can be exercised without a server account.
+    /// Launch-arg only (`-gsSeed`). Compiled out of release.
+    func debugSeedSampleRecipes() {
+        let specs: [(String, String, Int, Int, Int, Bool)] = [
+            // title, cuisine, prep, cook, cal, favorite
+            ("Avocado Toast",        "Breakfast",     5,  5,  280, true),
+            ("Green Smoothie Bowl",  "Breakfast",     8,  0,  240, false),
+            ("Chicken Stir-Fry",     "Thai",         12, 12,  520, true),
+            ("Beef Tacos",           "Mexican",      15, 15,  640, false),
+            ("Margherita Pizza",     "Italian",      25, 18,  780, false),
+            ("Slow Braised Short Ribs", "Italian",   20, 60,  860, false),
+        ]
+        recipes = specs.enumerated().map { i, s in
+            var r = Self.mockRecipe(source: "Sample")
+            r.id = "seed_\(i)"
+            r.title = s.0; r.cuisine = s.1; r.prep = s.2; r.cook = s.3; r.cal = s.4; r.favorite = s.5
+            return r
+        }
+        persistLocalOnly()
+    }
+    #endif
 
     func showPaywall(_ reason: PaywallReason = .upgrade) {
         Haptics.tap(.medium)
@@ -324,6 +452,20 @@ final class AppStore: ObservableObject {
     /// both the sandbox flow and a restored purchase land on.
     /// Applies a plan that Apple (and, when signed in, our server) has confirmed.
     /// This is the only path that may raise the plan — nothing in the UI sets it directly.
+    #if DEBUG
+    /// Set once a DEBUG-only local unlock has been used, so the server sync stops reverting
+    /// the plan to "free". Never compiled into release builds.
+    var debugPlanUnlocked = false
+
+    /// Testing shortcut for when StoreKit products can't load (e.g. the plain simulator, where
+    /// `simctl launch` doesn't apply the StoreKit config). Flips the plan locally and pins it so
+    /// the profile/paywall reflect Pro without a real purchase. NOT a code path in release.
+    func debugUnlock(_ plan: Entitlement.Plan, annual: Bool) {
+        debugPlanUnlocked = true
+        activate(plan, annual: annual)
+    }
+    #endif
+
     func applyPurchasedPlan(_ plan: Entitlement.Plan) {
         guard plan != entitlement.plan else { return }
         let upgrade = plan != .free
@@ -407,7 +549,62 @@ final class AppStore: ObservableObject {
     private var toastTask: Task<Void, Never>?
 
     static let days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-    static let weekDates = [17, 18, 19, 20, 21, 22, 23]
+
+    /// The real Date for each entry in `days` — Monday of the current calendar week onward,
+    /// so the meal plan always shows today's actual dates rather than fixed numbers.
+    var weekDayDates: [Date] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        // Calendar weekday is 1=Sun … 7=Sat; shift so Monday is day 0 of our week.
+        let daysSinceMonday = (cal.component(.weekday, from: today) + 5) % 7
+        guard let monday = cal.date(byAdding: .day, value: -daysSinceMonday, to: today) else { return [] }
+        return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: monday) }
+    }
+
+    /// The day-of-month number for each day this week, aligned to `days`.
+    var weekDates: [Int] {
+        weekDayDates.map { Calendar.current.component(.day, from: $0) }
+    }
+
+    /// Index into `days` for today, so the plan can highlight the current day.
+    var todayIndexInWeek: Int? { Self.days.firstIndex(of: todayName) }
+
+    /// The meal-plan's seven rows, a rolling window that STARTS with today and runs six days
+    /// forward. Each entry carries the weekday key (matching `plan`), the real date number,
+    /// and whether it's today.
+    var planDays: [(day: String, date: Int, isToday: Bool)] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "EEEE"
+        return (0..<7).compactMap { offset in
+            guard let d = cal.date(byAdding: .day, value: offset, to: today) else { return nil }
+            return (f.string(from: d), cal.component(.day, from: d), offset == 0)
+        }
+    }
+
+    /// e.g. "Sep 11 – 17", for the plan header, spanning the today-anchored window.
+    var planRangeLabel: String {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        guard let last = cal.date(byAdding: .day, value: 6, to: today) else { return "" }
+        let mon = DateFormatter(); mon.dateFormat = "MMM"
+        let startMonth = mon.string(from: today), endMonth = mon.string(from: last)
+        let d1 = cal.component(.day, from: today), d2 = cal.component(.day, from: last)
+        return startMonth == endMonth ? "\(startMonth) \(d1) – \(d2)" : "\(startMonth) \(d1) – \(endMonth) \(d2)"
+    }
+
+    /// e.g. "Sep 8 – 14" or "Aug 31 – Sep 6" for the current week's header.
+    var weekRangeLabel: String {
+        guard let first = weekDayDates.first, let last = weekDayDates.last else { return "" }
+        let cal = Calendar.current
+        let mon = DateFormatter(); mon.dateFormat = "MMM"
+        let startMonth = mon.string(from: first)
+        let endMonth = mon.string(from: last)
+        let d1 = cal.component(.day, from: first), d2 = cal.component(.day, from: last)
+        return startMonth == endMonth ? "\(startMonth) \(d1) – \(d2)" : "\(startMonth) \(d1) – \(endMonth) \(d2)"
+    }
 
     /// The whole local snapshot — persisted to UserDefaults and, for a signed-in user, synced
     /// to their account so it follows them to any device. Not private: the sync layer encodes it.
@@ -417,6 +614,9 @@ final class AppStore: ObservableObject {
         var plan: [String: String]
         var name: String?
         var preferences: UserPreferences?
+        /// Recently opened recipe ids, most-recent first — powers the "Recently viewed" row
+        /// and the "Jump back in" resume card. Optional with a default keeps older saves decodable.
+        var recentIDs: [String]? = nil
     }
     private static let storeKey = "gs_state_v4"
     fileprivate static let entitlementKey = "gs_entitlement_v1"
@@ -429,6 +629,7 @@ final class AppStore: ObservableObject {
             plan = saved.plan
             userName = saved.name ?? "Anny"
             preferences = saved.preferences ?? UserPreferences()
+            recentIDs = saved.recentIDs ?? []
         } else {
             // A new install starts genuinely empty — no sample recipes.
             recipes = []
@@ -455,7 +656,8 @@ final class AppStore: ObservableObject {
 
     /// The current local state as one snapshot.
     var snapshot: Persisted {
-        Persisted(recipes: recipes, shopping: shopping, plan: plan, name: userName, preferences: preferences)
+        Persisted(recipes: recipes, shopping: shopping, plan: plan, name: userName, preferences: preferences,
+                  recentIDs: recentIDs)
     }
 
     // MARK: - Account sync
@@ -545,20 +747,48 @@ final class AppStore: ObservableObject {
 
     /// After the splash, a returning user (saved session) goes straight to the app; only a
     /// first launch with no session sees onboarding.
+    private var hasOnboarded: Bool {
+        get { UserDefaults.standard.bool(forKey: "hasOnboarded") }
+        set { UserDefaults.standard.set(newValue, forKey: "hasOnboarded") }
+    }
+
     private func advanceFromSplash() {
         guard phase == .splash else { return }
         withAnimation(.easeOut(duration: 0.4)) {
-            phase = isAuthenticated ? .app : .onboard
+            if isAuthenticated {
+                phase = .app
+            } else if hasOnboarded {
+                authReason = .general
+                phase = .createAccount
+            } else {
+                phase = .welcome
+            }
         }
+    }
+
+    func startFromWelcome() {
+        withAnimation(.easeOut(duration: 0.4)) { phase = .onboard }
     }
 
     func onboardNext() {
         if obIndex >= 2 {
-            withAnimation(.easeOut(duration: 0.4)) {
-                phase = preferences.isComplete ? .app : .preferences
-            }
+            advanceFromOnboarding()
         } else {
             withAnimation(.easeOut(duration: 0.35)) { obIndex += 1 }
+        }
+    }
+
+    /// After onboarding (or skipping it): answer the taste profile if it isn't done, then —
+    /// crucially — require an account before the app itself. There is no guest dashboard.
+    private func advanceFromOnboarding() {
+        hasOnboarded = true
+        withAnimation(.easeOut(duration: 0.4)) {
+            if isAuthenticated {
+                phase = preferences.isComplete ? .app : .preferences
+            } else {
+                authReason = .general
+                phase = .createAccount
+            }
         }
     }
 
@@ -592,9 +822,7 @@ final class AppStore: ObservableObject {
     }
 
     func skipOnboard() {
-        withAnimation(.easeOut(duration: 0.4)) {
-            phase = preferences.isComplete ? .app : .preferences
-        }
+        advanceFromOnboarding()
     }
 
     func answerPreference(sound: Bool = true, _ apply: (inout UserPreferences) -> Void) {
@@ -649,7 +877,6 @@ final class AppStore: ObservableObject {
         case .reelProfile: return .home
         case .basket: return .shopping
         case .discover: return .library
-        case .reviews: return detailReturn
         case .paywall: return Self.depth(of: paywallReturn) == 0 ? paywallReturn : .importer
         case .auth: return Self.depth(of: authReturn) == 0 ? authReturn : .home
         default: return screen
@@ -664,7 +891,6 @@ final class AppStore: ObservableObject {
         case .scanResults: return .scanIdentify
         case .scanIdentify: return .importer
         case .basket: return .shopping
-        case .reviews: return .detail
         case .reelProfile: return .feed
         case .profile, .feed: return .home
         case .paywall: return paywallReturn
@@ -684,6 +910,39 @@ final class AppStore: ObservableObject {
         Haptics.tap(navDirection == .lateral ? .light : .medium)
         withAnimation(Self.navAnimation) {
             screen = target
+        }
+        rememberTabState()
+    }
+
+    // MARK: - Per-tab navigation memory
+
+    /// The deepest screen (and the recipe it was showing) last active under each tab root, so
+    /// switching tabs and coming back restores where you were — e.g. a recipe you were reading —
+    /// instead of dumping you at the tab's root.
+    private struct TabState { var screen: Screen; var recipe: Recipe?; var selId: String? }
+    private var tabMemory: [Screen: TabState] = [:]
+
+    private func rememberTabState() {
+        let root = activeTabRoot
+        if Self.depth(of: screen) > 0 {
+            tabMemory[root] = TabState(screen: screen, recipe: openedRecipe, selId: selId)
+        } else {
+            tabMemory[root] = nil   // at the root there's nothing deeper to restore
+        }
+    }
+
+    /// Tab-bar tap: go back to where you last were under this tab (e.g. a recipe you were
+    /// reading), not always its root. Falls back to the root when there's nothing deeper to
+    /// restore. Use the back button/gesture to leave a detail — that's what clears the memory.
+    func selectTab(_ root: Screen) {
+        if let saved = tabMemory[root], saved.screen != root, Self.depth(of: saved.screen) > 0 {
+            // Rebind the restored detail to this tab so its highlight and back target are right.
+            detailReturn = root
+            openedRecipe = saved.recipe
+            selId = saved.selId
+            go(to: saved.screen)
+        } else {
+            go(to: root)
         }
     }
 
@@ -847,6 +1106,11 @@ final class AppStore: ObservableObject {
         }
         if chip == "Favorites" { out = out.filter(\.favorite) }
         else if chip != "All" { out = out.filter { $0.cuisine == chip } }
+
+        // Extra filters from the Filters sheet.
+        if timeBand != .any { out = out.filter { timeBand.matches($0.totalMinutes) } }
+        if calBand != .any { out = out.filter { calBand.matches($0.cal) } }
+        if let d = difficultyFilter { out = out.filter { $0.difficultyLabel == d } }
         return out
     }
 
@@ -1034,6 +1298,9 @@ final class AppStore: ObservableObject {
         if catalogCuisines.isEmpty {
             Task { catalogCuisines = (try? await CatalogService.cuisines()) ?? [] }
         }
+        if catalogCategories.isEmpty {
+            Task { catalogCategories = (try? await CatalogService.categories()) ?? [] }
+        }
     }
 
     /// Loads the community's most-cooked recipes. Best-effort: needs a signed-in token, and
@@ -1046,8 +1313,37 @@ final class AppStore: ObservableObject {
         }
     }
 
+    /// Adds or removes a country from the multi-select country facet. Passing nil clears them all.
     func setCatalogCuisine(_ cuisine: String?) {
-        catalogCuisine = cuisine
+        if let cuisine { catalogCuisine.formSymmetricDifference([cuisine]) }
+        else { catalogCuisine.removeAll() }
+        Task { await loadCatalog(reset: true) }
+    }
+
+    /// Adds or removes a food type from the multi-select food-type facet. nil clears them all.
+    func setCatalogCategory(_ category: String?) {
+        if let category { catalogCategory.formSymmetricDifference([category]) }
+        else { catalogCategory.removeAll() }
+        Task { await loadCatalog(reset: true) }
+    }
+
+    /// Resets every Discover filter facet at once (the sheet's "Clear all").
+    func setCatalogMaxTime(_ t: Int?) {
+        catalogMaxTime = catalogMaxTime == t ? nil : t
+        Task { await loadCatalog(reset: true) }
+    }
+
+    func setCatalogMaxCal(_ c: Int?) {
+        catalogMaxCal = catalogMaxCal == c ? nil : c
+        Task { await loadCatalog(reset: true) }
+    }
+
+    func clearCatalogFilters() {
+        catalogCuisine.removeAll()
+        catalogCategory.removeAll()
+        catalogSearch = ""
+        catalogMaxTime = nil
+        catalogMaxCal = nil
         Task { await loadCatalog(reset: true) }
     }
 
@@ -1063,7 +1359,9 @@ final class AppStore: ObservableObject {
         let offset = reset ? 0 : catalog.count
         do {
             let rows = try await CatalogService.fetch(
-                cuisine: catalogCuisine, search: catalogSearch, limit: 60, offset: offset)
+                cuisines: catalogCuisine, categories: catalogCategory,
+                search: catalogSearch, maxTime: catalogMaxTime, maxCal: catalogMaxCal,
+                limit: 60, offset: offset)
             let recipes = rows.map(\.recipe)
             if reset { catalog = recipes } else { catalog.append(contentsOf: recipes) }
         } catch {
@@ -1074,91 +1372,10 @@ final class AppStore: ObservableObject {
 
     /// Opens a catalog recipe in the normal detail screen. It is added to the library on
     /// first view so cook mode, favouriting and the shopping list all work on it.
-    // MARK: - Reviews
-
-    /// Loads reviews for the given recipe if not already loaded for it.
-    @MainActor
-    func loadReviews(for recipe: Recipe, force: Bool = false) async {
-        if !force, reviewsRecipeKey == recipe.id, !reviews.isEmpty { return }
-        guard !reviewsLoading else { return }
-        reviewsLoading = true
-        defer { reviewsLoading = false }
-        reviewsRecipeKey = recipe.id
-        if let rows = try? await ReviewService.reviews(recipeKey: recipe.id) {
-            // Guard against a slow response arriving after the user moved on.
-            if reviewsRecipeKey == recipe.id { reviews = rows }
-        }
-    }
-
-    /// Opens the "all reviews" screen for the current recipe.
-    func openReviews() {
-        reviewFilter = nil
-        go(to: .reviews)
-        if let sel = selected { Task { await loadReviews(for: sel) } }
-    }
-
-    /// Opens the write/edit-review sheet, gated behind having an account.
-    func startReview() {
-        guard isAuthenticated, aiToken != nil else { showAuth(.aiFeature); return }
-        writingReview = true
-    }
-
-    func setReviewFilter(_ star: Int?) {
-        withAnimation(Self.lateralAnimation) { reviewFilter = (reviewFilter == star) ? nil : star }
-    }
-
-    /// Posts or updates the current user's review of the open recipe.
-    func submitReview(rating: Int, body: String) async {
-        guard let sel = selected, let token = aiToken, let uid = currentUserID else {
-            showAuth(.aiFeature); return
-        }
-        do {
-            _ = try await ReviewService.submit(
-                recipeKey: sel.id, title: sel.title, rating: rating, body: body,
-                token: token, userID: uid, existingID: myReview?.id)
-            writingReview = false
-            Haptics.notify(.success)
-            await loadReviews(for: sel, force: true)
-            showToast("Thanks for your review")
-        } catch {
-            Haptics.notify(.error)
-            showToast("Couldn't save your review")
-        }
-    }
-
-    func deleteMyReview() async {
-        guard let sel = selected, let token = aiToken, let mine = myReview else { return }
-        do {
-            try await ReviewService.delete(id: mine.id, token: token)
-            await loadReviews(for: sel, force: true)
-            showToast("Review removed")
-        } catch {
-            showToast("Couldn't remove your review")
-        }
-    }
-
-    func startReviewReport(_ review: RecipeReview) {
-        Haptics.tap(.medium)
-        reportingReview = review
-    }
-
-    func submitReviewReport(reason: SocialAPI.ReportReason, note: String) async {
-        guard let review = reportingReview, let token = aiToken, let uid = currentUserID else { return }
-        do {
-            try await ReviewService.report(id: review.id, reason: reason, note: note, token: token, userID: uid)
-            // Drop it locally right away so the reporter stops seeing it.
-            withAnimation(Self.pushAnimation) { reviews.removeAll { $0.id == review.id } }
-            Haptics.notify(.success)
-            showToast("Thanks — our team reviews reports within 24 hours.")
-        } catch {
-            Haptics.notify(.error)
-            showToast("Couldn't send the report")
-        }
-        reportingReview = nil
-    }
-
+    /// Opens a catalog/discover recipe for browsing. It is NOT added to the library — saving is
+    /// a deliberate action on the detail screen (or the reel's Save button). The detail resolves
+    /// it from `openedRecipe`, so viewing, cook mode and shopping all work unsaved.
     func openCatalogRecipe(_ recipe: Recipe) {
-        saveToLibrary(recipe)
         open(recipe)
     }
 
@@ -1172,6 +1389,23 @@ final class AppStore: ObservableObject {
         return true
     }
 
+    /// Adds or removes a recipe from the library — the detail screen's Save button. Removing
+    /// also clears it from the meal plan (a plan can't point at a recipe you no longer keep).
+    /// Returns true when the recipe is saved after the toggle.
+    @discardableResult
+    func toggleSaved(_ recipe: Recipe) -> Bool {
+        Haptics.tap(.light)
+        if recipes.contains(where: { $0.id == recipe.id }) {
+            for (day, id) in plan where id == recipe.id { plan[day] = nil }
+            recipes.removeAll { $0.id == recipe.id }
+            persist()
+            return false
+        }
+        recipes.insert(recipe, at: 0)
+        persist()
+        return true
+    }
+
     // MARK: - Recipes
 
     func open(_ recipe: Recipe) {
@@ -1179,13 +1413,45 @@ final class AppStore: ObservableObject {
         openedRecipe = recipe
         selId = recipe.id
         cookStep = 0
+        noteRecentlyViewed(recipe.id)
         go(to: .detail)
+    }
+
+    /// Moves a recipe to the front of the recently-viewed list and persists it, so the
+    /// "Jump back in" card and "Recently viewed" row survive leaving the app.
+    private func noteRecentlyViewed(_ id: String) {
+        recentIDs.removeAll { $0 == id }
+        recentIDs.insert(id, at: 0)
+        if recentIDs.count > Self.recentLimit { recentIDs = Array(recentIDs.prefix(Self.recentLimit)) }
+        persist()
+    }
+
+    /// Recently opened recipes that still exist in the library, most-recent first. Ids that no
+    /// longer resolve (e.g. an unsaved preview, or a deleted recipe) are skipped.
+    var recentRecipes: [Recipe] {
+        recentIDs.compactMap { id in recipes.first { $0.id == id } }
+    }
+
+    /// The single most recent recipe, for the "Jump back in" resume card.
+    var resumeRecipe: Recipe? { recentRecipes.first }
+
+    /// Reopens the last-viewed recipe from the resume card.
+    func resumeLast() {
+        guard let recipe = resumeRecipe else { return }
+        open(recipe)
     }
 
     func toggleFav(_ id: String) {
         if let i = recipes.firstIndex(where: { $0.id == id }) {
             Haptics.tap(.light)
             withAnimation(Self.stepAnimation) { recipes[i].favorite.toggle() }
+            persist()
+        } else if let opened = openedRecipe, opened.id == id {
+            // Favouriting a recipe you're only browsing keeps it: save it, favourited.
+            Haptics.tap(.light)
+            var r = opened
+            r.favorite = true
+            withAnimation(Self.stepAnimation) { recipes.insert(r, at: 0) }
             persist()
         }
     }
@@ -1194,6 +1460,7 @@ final class AppStore: ObservableObject {
         guard let sel = selected else { return }
         for (day, id) in plan where id == sel.id { plan[day] = nil }
         recipes.removeAll { $0.id == sel.id }
+        recentIDs.removeAll { $0 == sel.id }
         selId = nil
         go(to: .library)
         persist()
@@ -1204,6 +1471,7 @@ final class AppStore: ObservableObject {
     func deleteRecipe(_ id: String) {
         Haptics.tap(.medium)
         for (day, planned) in plan where planned == id { plan[day] = nil }
+        recentIDs.removeAll { $0 == id }
         withAnimation(Self.pushAnimation) {
             recipes.removeAll { $0.id == id }
         }
@@ -1307,6 +1575,7 @@ final class AppStore: ObservableObject {
     func detect(_ text: String) -> String {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if t.range(of: #"youtu\.?be"#, options: [.regularExpression, .caseInsensitive]) != nil { return "YouTube video" }
+        if let platform = RecipeExtractor.socialPlatform(for: t) { return platform }
         if t.range(of: #"^https?://"#, options: [.regularExpression, .caseInsensitive]) != nil { return "Website" }
         return "Pasted text"
     }
@@ -1812,10 +2081,6 @@ final class AppStore: ObservableObject {
                 self.handleAIError(error)
             }
         }
-    }
-
-    func fillSample() {
-        importText = "https://www.youtube.com/watch?v=tacos-al-pastor"
     }
 
     private func runMockExtraction(source: String) {

@@ -295,16 +295,17 @@ private struct ReelCell: View {
         .onAppear { armYouTubePoster(isActive) }
     }
 
-    /// Holds the poster over a YouTube reel from the moment it becomes active until its
-    /// start-of-play chrome has faded; no-op for uploaded clips (which never show chrome and
-    /// lift the poster the instant their first frame is ready).
+    /// Re-covers the poster over a YouTube reel each time it becomes active, so the black load
+    /// frame is hidden until playback starts; the player's PLAYING signal lifts it. A fallback
+    /// lifts it anyway if that signal never arrives, so a reel can't get stuck on its poster.
+    /// No-op for uploaded clips (which lift on their first frame via the player's onReady).
     private func armYouTubePoster(_ active: Bool) {
         guard case .youtube = reel.source else { return }
         guard active else { videoReady = false; return }
         videoReady = false
         Task { @MainActor in
-            try? await Task.sleep(for: .seconds(3.0))
-            guard isActive else { return }
+            try? await Task.sleep(for: .seconds(4.0))
+            guard isActive, !videoReady else { return }
             withAnimation(.easeOut(duration: 0.4)) { videoReady = true }
         }
     }
@@ -316,8 +317,9 @@ private struct ReelCell: View {
             ReelVideoPlayer(url: url, isActive: isActive, isMuted: muted,
                             onReady: { videoReady = true })
         case .youtube(let id):
-            // Poster timing is owned by armYouTubePoster, so the player's ready signal is unused.
-            ReelYouTubePlayer(videoID: id, isActive: isActive, isMuted: muted)
+            // Lift the poster the moment playback starts; armYouTubePoster re-covers on activation.
+            ReelYouTubePlayer(videoID: id, isActive: isActive, isMuted: muted,
+                              onReady: { if isActive { videoReady = true } })
         }
     }
 
@@ -349,15 +351,34 @@ private struct ReelCell: View {
 
     private var info: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Button { store.openReelProfile(authorID: reel.authorID) } label: {
-                HStack(spacing: 9) {
-                    avatar
-                    Text("@" + handle)
-                        .font(nunito(14.5, .black))
-                        .foregroundStyle(.white)
+            HStack(spacing: 9) {
+                Button { store.openReelProfile(authorID: reel.authorID) } label: {
+                    HStack(spacing: 9) {
+                        avatar
+                        Text("@" + handle)
+                            .font(nunito(14.5, .black))
+                            .foregroundStyle(.white)
+                    }
+                }
+                .buttonStyle(PressableStyle(scale: 0.96))
+
+                // YouTube's own view count, when the proxy has fetched it.
+                if let views = social.views(for: reel) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 8.5, weight: .black))
+                        Text(views.compactCount)
+                            .font(nunito(11, .black))
+                    }
+                    .foregroundStyle(.white.opacity(0.92))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.black.opacity(0.42), in: Capsule())
+                    .overlay(Capsule().strokeBorder(ReelStyle.chipStroke, lineWidth: 0.8))
+                    .transition(.opacity)
                 }
             }
-            .buttonStyle(PressableStyle(scale: 0.96))
+            .animation(.easeOut(duration: 0.25), value: social.views(for: reel) ?? -1)
 
             if !reel.caption.isEmpty, reel.caption != reel.recipe?.title {
                 Text(reel.caption)

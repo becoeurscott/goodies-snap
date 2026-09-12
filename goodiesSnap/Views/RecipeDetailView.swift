@@ -127,9 +127,6 @@ struct RecipeDetailView: View {
                                 .padding(.top, 16)
                         }
 
-                        reviewsSection(sel)
-                            .padding(.top, 28)
-
                         Button {
                             store.cookStep = 0
                             store.go(to: .cook)
@@ -176,7 +173,6 @@ struct RecipeDetailView: View {
                 .padding(.bottom, 116)
             }
             .ignoresSafeArea(edges: .top)
-            .task(id: sel.id) { await store.loadReviews(for: sel) }
             .alert("Delete \"\(sel.title)\"?", isPresented: $confirmDelete) {
                 Button("Delete", role: .destructive) { store.deleteSelected() }
                 Button("Cancel", role: .cancel) {}
@@ -203,66 +199,6 @@ struct RecipeDetailView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.gsBg)
-        }
-    }
-
-    /// Ratings summary + write-a-review entry + a peek at recent reviews.
-    @ViewBuilder
-    private func reviewsSection(_ sel: Recipe) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center) {
-                Text("Reviews")
-                    .font(nunito(19, .extrabold))
-                Spacer()
-                if store.reviewCount > 0 {
-                    Button { store.openReviews() } label: {
-                        Text("See all \(store.reviewCount)")
-                            .font(nunito(13, .extrabold))
-                            .foregroundStyle(Color.gsAccentInk)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            if store.reviewCount > 0 {
-                HStack(spacing: 12) {
-                    Text(String(format: "%.1f", store.averageRating))
-                        .font(nunito(34, .black))
-                    VStack(alignment: .leading, spacing: 2) {
-                        StarRow(rating: store.averageRating, size: 15)
-                        Text("\(store.reviewCount) review\(store.reviewCount == 1 ? "" : "s")")
-                            .font(nunito(11.5, .bold))
-                            .foregroundStyle(Color.gsMuted)
-                    }
-                    Spacer()
-                }
-            } else if store.reviewsLoading {
-                ProgressView()
-            } else {
-                Text("No reviews yet — be the first to rate this recipe.")
-                    .font(nunito(12.5, .semibold))
-                    .foregroundStyle(Color.gsMuted)
-            }
-
-            // A peek at the two most recent reviews.
-            ForEach(store.reviews.prefix(2)) { review in
-                ReviewRow(review: review, isMine: review.user_id == store.currentUserID)
-            }
-
-            Button { store.startReview() } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: store.myReview == nil ? "star.bubble" : "square.and.pencil")
-                        .font(.system(size: 15, weight: .bold))
-                    Text(store.myReview == nil ? "Write a review" : "Edit your review")
-                        .font(nunito(14, .extrabold))
-                }
-                .foregroundStyle(Color.gsFg)
-                .frame(maxWidth: .infinity, minHeight: 50)
-                .background(Color.fg(0.06))
-                .clipShape(Capsule())
-                .overlay(Capsule().strokeBorder(Color.fg(0.16), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
         }
     }
 
@@ -323,9 +259,16 @@ struct RecipeDetailView: View {
         }
         .frame(height: 380)
         .overlay(alignment: .top) {
-            HStack {
+            HStack(spacing: 10) {
                 circleButton(system: "chevron.left") { store.goBack() }
                 Spacer()
+                // Saving is deliberate: browsing a catalog recipe no longer adds it silently.
+                circleButton(
+                    system: store.isInLibrary(sel.id) ? "bookmark.fill" : "bookmark"
+                ) {
+                    let saved = store.toggleSaved(sel)
+                    store.showToast(saved ? "Saved to your library" : "Removed from your library")
+                }
                 circleButton(
                     system: sel.favorite ? "heart.fill" : "heart"
                 ) { store.toggleFav(sel.id) }
