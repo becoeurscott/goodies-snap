@@ -370,7 +370,7 @@ final class AppStore: ObservableObject {
         welcome = newAccount ? .newAccount : .returning
         screen = .home
         withAnimation(.easeOut(duration: 0.4)) {
-            if !preferences.isComplete {
+            if newAccount && !preferences.isComplete {
                 phase = .preferences
             } else {
                 phase = .preparing
