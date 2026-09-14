@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>GIDClientID</key>
+	<string>454567101213-mppndao2f0ckd6sibutc4vpglu2hpfg9.apps.googleusercontent.com</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -10,6 +12,14 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>goodiessnap</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Google Sign-In</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.454567101213-mppndao2f0ckd6sibutc4vpglu2hpfg9</string>
 			</array>
 		</dict>
 	</array>

@@ -102,6 +102,10 @@ final class SocialStore: ObservableObject {
         await authFlow(isSignUp: false) { try await SocialAPI.signIn(email: email, password: password) }
     }
 
+    func signInWithGoogle(idToken: String, name: String) async {
+        await authFlow(isSignUp: true) { try await SocialAPI.signInWithGoogle(idToken: idToken, name: name) }
+    }
+
     private func authFlow(isSignUp: Bool, _ work: () async throws -> SocialAPI.Session) async {
         busy = true
         errorMessage = ""

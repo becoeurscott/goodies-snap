@@ -1,4 +1,5 @@
 import SwiftUI
+import GoogleSignIn
 
 @main
 struct GoodiesSnapApp: App {
@@ -13,6 +14,9 @@ struct GoodiesSnapApp: App {
                 .environmentObject(social)
                 .environmentObject(purchases)
                 .preferredColorScheme(.light)
+                .onOpenURL { url in
+                    GIDSignIn.sharedInstance.handle(url)
+                }
                 .task {
                     // Wire the purchase layer to the rest of the app once, at launch:
                     // transactions can arrive before the paywall is ever opened.

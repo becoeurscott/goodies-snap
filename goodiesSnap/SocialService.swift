@@ -51,6 +51,34 @@ enum SocialAPI {
         return user
     }
 
+    static func signInWithGoogle(idToken: String, name: String) async throws -> Session {
+        var request = URLRequest(url: URL(string: "https://j7pth4qn.function2.insforge.app/google-auth")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "id_token": idToken,
+            "name": name,
+        ])
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        guard (response as? HTTPURLResponse)?.statusCode ?? 0 < 300 else {
+            throw SocialError.server(json["error"] as? String ?? "Google sign-in failed")
+        }
+        guard let token = json["accessToken"] as? String,
+              let user = json["user"] as? [String: Any],
+              let id = user["id"] as? String else {
+            throw SocialError.server("Google sign-in failed")
+        }
+        let displayName = (user["name"] as? String) ?? name
+        let isNew = json["is_new_user"] as? Bool ?? false
+        var session = Session(accessToken: token, refreshToken: json["refreshToken"] as? String, userID: id, displayName: displayName)
+        try await upsertProfile(session: session)
+        return session
+    }
+
     private static func authRequest(path: String, body: [String: String]) async throws -> Session {
         var request = URLRequest(url: baseURL.appending(path: path).appending(queryItems: [URLQueryItem(name: "client_type", value: "mobile")]))
         request.httpMethod = "POST"
@@ -104,7 +132,7 @@ enum SocialAPI {
         return next
     }
 
-    private static func upsertProfile(session: Session) async throws {
+    static func upsertProfile(session: Session) async throws {
         struct Row: Encodable { let id: String; let display_name: String; let country: String? }
         struct Patch: Encodable { let display_name: String; let country: String? }
         let region = Locale.current.region?.identifier

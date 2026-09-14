@@ -81,6 +81,7 @@
 			);
 			name = goodiesSnap;
 			packageProductDependencies = (
+				GS_GIDSDK_PROD /* GoogleSignIn */,
 			);
 			productName = goodiesSnap;
 			productReference = GS00000000000000000002 /* goodiesSnap.app */;
@@ -113,6 +114,9 @@
 			productRefGroup = GS00000000000000000004 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
+			packageReferences = (
+				GS_GIDSDK_PKG /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+			);
 			targets = (
 				GS00000000000000000008 /* goodiesSnap */,
 			);
@@ -265,6 +269,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		GS_GIDSDK_PKG /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 8.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		GS_GIDSDK_PROD /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = GS_GIDSDK_PKG /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = GS00000000000000000009 /* Project object */;
 }

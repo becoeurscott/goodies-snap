@@ -1,4 +1,5 @@
 import SwiftUI
+import GoogleSignIn
 
 /// Sign in / create account.
 ///
@@ -347,7 +348,7 @@ struct AuthView: View {
                 GoogleGlyph().frame(width: 18, height: 18)
                 Text("Google").font(nunito(13.5, .extrabold)).foregroundStyle(Color.gsFg)
             } action: {
-                store.showToast("Google sign-in isn't set up yet", seconds: 2.4)
+                Task { await handleGoogleSignIn() }
             }
         }
     }
@@ -425,6 +426,31 @@ struct AuthView: View {
             .font(nunito(10.5, .extrabold))
             .foregroundStyle(Color.gsAccentInk)
             .padding(.leading, 29)
+        }
+    }
+
+    private func handleGoogleSignIn() async {
+        if isSignUp && !acceptedTerms {
+            store.showToast("Please accept the terms first", seconds: 2.4)
+            return
+        }
+        guard let rootVC = UIApplication.shared.connectedScenes
+            .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController })
+            .first else { return }
+
+        do {
+            let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: rootVC)
+            guard let idToken = result.user.idToken?.tokenString else {
+                store.showToast("Couldn't get Google credentials", seconds: 2.4)
+                return
+            }
+            let name = result.user.profile?.name ?? "Cook"
+            await social.signInWithGoogle(idToken: idToken, name: name)
+        } catch {
+            let code = (error as NSError).code
+            if code != GIDSignInError.canceled.rawValue {
+                store.showToast("Google sign-in failed", seconds: 2.4)
+            }
         }
     }
 
