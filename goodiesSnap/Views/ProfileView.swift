@@ -130,10 +130,35 @@ struct ProfileView: View {
             Text("Privacy & legal")
                 .font(nunito(19, .extrabold))
 
+            Button { store.go(to: .support) } label: {
+                HStack(spacing: 14) {
+                    Image(systemName: "bubble.left.and.text.bubble.right.fill")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Color.white)
+                        .frame(width: 42, height: 42)
+                        .background(Color.gsPeach)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Chat support")
+                            .font(nunito(15, .extrabold))
+                        Text("FAQ & live help")
+                            .font(nunito(11.5, .semibold))
+                            .foregroundStyle(Color.fg(0.5))
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.fg(0.4))
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .glassCard(radius: 20, fill: 0.05, stroke: 0.1)
+            }
+            .buttonStyle(.plain)
+
             VStack(spacing: 0) {
                 legalRow(icon: "doc.text", title: "Terms of Use", url: Legal.terms)
-                legalRow(icon: "hand.raised", title: "Privacy Policy", url: Legal.privacy)
-                legalRow(icon: "envelope", title: "Contact support", url: Legal.support, isLast: true)
+                legalRow(icon: "hand.raised", title: "Privacy Policy", url: Legal.privacy, isLast: true)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 4)

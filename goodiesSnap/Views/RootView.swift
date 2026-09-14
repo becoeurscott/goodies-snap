@@ -152,6 +152,7 @@ struct RootView: View {
         case "plan": store.go(to: .plan)
         case "import": store.go(to: .importer)
         case "profile": store.openProfile()
+        case "support": store.openProfile(); store.go(to: .support)
         case "discover": store.openDiscover()
         case "picker":
             store.go(to: .plan)
@@ -331,6 +332,7 @@ struct RootView: View {
                 case .reelProfile: ReelProfileView()
                 case .discover: DiscoverView()
                 case .paywall: PaywallView()
+                case .support: SupportView()
                 case .auth: AuthView()
                 }
             }

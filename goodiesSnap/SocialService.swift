@@ -105,13 +105,15 @@ enum SocialAPI {
     }
 
     private static func upsertProfile(session: Session) async throws {
-        struct Row: Encodable { let id: String; let display_name: String }
+        struct Row: Encodable { let id: String; let display_name: String; let country: String? }
+        struct Patch: Encodable { let display_name: String; let country: String? }
+        let region = Locale.current.region?.identifier
         // Insert; on conflict (already exists) fall back to update.
         do {
-            try await send("POST", "profiles", body: [Row(id: session.userID, display_name: session.displayName)], token: session.accessToken)
+            try await send("POST", "profiles", body: [Row(id: session.userID, display_name: session.displayName, country: region)], token: session.accessToken)
         } catch {
             try? await send("PATCH", "profiles", query: "id=eq.\(session.userID)",
-                            body: ["display_name": session.displayName], token: session.accessToken)
+                            body: Patch(display_name: session.displayName, country: region), token: session.accessToken)
         }
     }
 

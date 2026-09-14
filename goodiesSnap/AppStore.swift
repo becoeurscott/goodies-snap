@@ -5,7 +5,7 @@ import UIKit
 @MainActor
 final class AppStore: ObservableObject {
     enum Phase { case splash, welcome, onboard, preferences, createAccount, preparing, app }
-    enum Screen { case home, importer, scanIdentify, scanResults, library, detail, cook, shopping, basket, plan, profile, feed, discover, reelProfile, paywall, auth }
+    enum Screen { case home, importer, scanIdentify, scanResults, library, detail, cook, shopping, basket, plan, profile, feed, discover, reelProfile, paywall, auth, support }
 
     /// Which way the next screen change should animate.
     enum NavDirection { case forward, backward, lateral }
@@ -17,7 +17,7 @@ final class AppStore: ObservableObject {
         case .home, .importer, .library, .shopping, .plan: return 0
         case .scanIdentify, .scanResults, .detail, .profile, .feed, .discover, .basket: return 1
         case .reelProfile: return 2
-        case .cook, .paywall, .auth: return 2
+        case .cook, .paywall, .auth, .support: return 2
         }
     }
 
@@ -877,6 +877,7 @@ final class AppStore: ObservableObject {
         case .reelProfile: return .home
         case .basket: return .shopping
         case .discover: return .library
+        case .support: return .profile
         case .paywall: return Self.depth(of: paywallReturn) == 0 ? paywallReturn : .importer
         case .auth: return Self.depth(of: authReturn) == 0 ? authReturn : .home
         default: return screen
@@ -893,6 +894,7 @@ final class AppStore: ObservableObject {
         case .basket: return .shopping
         case .reelProfile: return .feed
         case .profile, .feed: return .home
+        case .support: return .profile
         case .paywall: return paywallReturn
         case .auth: return authReturn
         default: return nil
@@ -988,6 +990,7 @@ final class AppStore: ObservableObject {
         // you leave by the back chevron or the edge swipe, like cook mode and the paywall.
         phase == .app && screen != .cook && screen != .scanIdentify && screen != .paywall
             && screen != .auth && screen != .profile && screen != .feed && screen != .reelProfile
+            && screen != .support
     }
 
     var undoneCount: Int { shopping.filter { !$0.done }.count }

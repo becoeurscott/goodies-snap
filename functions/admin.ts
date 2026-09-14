@@ -29,6 +29,21 @@ const CORS = {
 const BUCKET = 'post-images';
 const PLANS = new Set(['free', 'plus', 'pro']);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Role tiers. A legacy owner (is_admin=true, admin_role=null) resolves to SUPER_ADMIN.
+const ROLE_RANK: Record<string, number> = {
+  READ_ONLY: 0, SUPPORT: 1, MODERATOR: 2, ADMIN: 3, SUPER_ADMIN: 4,
+};
+// Minimum role required per action. Anything not listed defaults to SUPER_ADMIN (deny by
+// default for unknown actions).
+const PERMISSIONS: Record<string, string> = {
+  set_plan: 'SUPPORT', add_top_up: 'SUPPORT', reset_quota: 'SUPPORT', set_trial: 'SUPPORT',
+  hide_content: 'MODERATOR', delete_content: 'MODERATOR', delete_post: 'MODERATOR', delete_report: 'MODERATOR',
+  catalog_upsert: 'ADMIN', catalog_delete: 'ADMIN', catalog_set_flags: 'ADMIN',
+  group_upsert: 'ADMIN', group_delete: 'ADMIN', delete_user: 'ADMIN',
+  set_admin: 'ADMIN', set_role: 'SUPER_ADMIN',
+  config_upsert: 'ADMIN', config_rollback: 'ADMIN', maintenance_set: 'ADMIN', broadcast_create: 'ADMIN',
+};
 // Every id is interpolated into a PostgREST URL; reject anything that isn't a plain UUID so a
 // crafted value can't smuggle extra query filters.
 const isUUID = (s: unknown): s is string => typeof s === 'string' && UUID_RE.test(s);
@@ -76,16 +91,36 @@ export default async function (req: Request) {
   // The gate: the caller must be a real admin. Read with the service key so RLS can't
   // mask the flag. Grab the display name too, for the audit trail.
   let actorName = '';
+  let callerRole = '';
   try {
     const meRes = await fetch(
-      `${baseURL}/api/database/records/profiles?id=eq.${callerId}&select=is_admin,display_name&limit=1`,
+      `${baseURL}/api/database/records/profiles?id=eq.${callerId}&select=is_admin,admin_role,display_name&limit=1`,
       { headers: admin },
     );
     const me = await meRes.json();
     if (!Array.isArray(me) || !me[0]?.is_admin) return json({ error: 'not_admin' }, 403);
     actorName = me[0].display_name || '';
+    // Legacy owners with no explicit role are full SUPER_ADMIN.
+    callerRole = me[0].admin_role || 'SUPER_ADMIN';
   } catch {
     return json({ error: 'not_admin' }, 403);
+  }
+
+  const action = String(body.action || '');
+  // Permission gate: unknown actions require SUPER_ADMIN (deny by default).
+  const needRole = PERMISSIONS[action] ?? 'SUPER_ADMIN';
+  if ((ROLE_RANK[callerRole] ?? -1) < ROLE_RANK[needRole]) return json({ error: 'insufficient_role' }, 403);
+
+  // An admin may never act on themselves or on a peer/higher role. Used for role changes and
+  // account deletion. Reads the target's rank with the service key.
+  async function guardTarget(targetId: string): Promise<Response | null> {
+    if (targetId === callerId) return json({ error: 'cannot_target_self' }, 400);
+    const t = await getOne('profiles', `id=eq.${targetId}&select=is_admin,admin_role`);
+    const targetRole = t?.is_admin ? (String(t.admin_role || 'SUPER_ADMIN')) : null;
+    if (targetRole && (ROLE_RANK[callerRole] ?? -1) <= (ROLE_RANK[targetRole] ?? 99)) {
+      return json({ error: 'target_outranks_you' }, 403);
+    }
+    return null;
   }
 
   // ---- helpers (service key) ----
@@ -118,14 +153,12 @@ export default async function (req: Request) {
     return Number.isInteger(n) && n >= min && n <= max ? n : null;
   };
 
-  const action = String(body.action || '');
-
   // ======================= USERS =======================
 
   if (action === 'delete_user') {
     const target = body.userId;
     if (!isUUID(target)) return json({ error: 'missing_user' }, 400);
-    if (target === callerId) return json({ error: 'cannot_delete_self' }, 400);
+    const blocked = await guardTarget(target); if (blocked) return blocked;
 
     let photosDeleted = 0;
     try {
@@ -172,10 +205,28 @@ export default async function (req: Request) {
   if (action === 'set_admin') {
     const target = body.userId;
     if (!isUUID(target)) return json({ error: 'missing_user' }, 400);
-    if (target === callerId) return json({ error: 'cannot_change_self' }, 400);
-    const res = await rest(`profiles?id=eq.${target}`, { method: 'PATCH', body: JSON.stringify({ is_admin: !!body.value }) });
+    const blocked = await guardTarget(target); if (blocked) return blocked;
+    // Grant = ADMIN tier; revoke = clear both flags. Keeps the is_admin invariant.
+    const grant = !!body.value;
+    const patch = grant ? { is_admin: true, admin_role: 'ADMIN' } : { is_admin: false, admin_role: null };
+    const res = await rest(`profiles?id=eq.${target}`, { method: 'PATCH', body: JSON.stringify(patch) });
     if (!res.ok) { console.error('set_admin', res.status, await res.text()); return json({ error: 'update_failed' }, 502); }
-    await audit('set_admin', 'user', target, { value: !!body.value });
+    await audit('set_admin', 'user', target, { value: grant });
+    return json({ ok: true });
+  }
+
+  if (action === 'set_role') {
+    const target = body.userId, role = String(body.role || '');
+    if (!isUUID(target)) return json({ error: 'missing_user' }, 400);
+    if (role !== '' && !(role in ROLE_RANK)) return json({ error: 'bad_role' }, 400);
+    const blocked = await guardTarget(target); if (blocked) return blocked;
+    // Can't assign a role at or above your own (a SUPER_ADMIN can assign anything incl. SUPER_ADMIN).
+    if (role && ROLE_RANK[role] > ROLE_RANK[callerRole]) return json({ error: 'cannot_grant_above_self' }, 403);
+    // Assigning a role sets is_admin=true (invariant); clearing removes admin entirely.
+    const patch = role ? { is_admin: true, admin_role: role } : { is_admin: false, admin_role: null };
+    const res = await rest(`profiles?id=eq.${target}`, { method: 'PATCH', body: JSON.stringify(patch) });
+    if (!res.ok) { console.error('set_role', res.status, await res.text()); return json({ error: 'update_failed' }, 502); }
+    await audit('set_role', 'user', target, { role: role || null });
     return json({ ok: true });
   }
 
@@ -312,6 +363,77 @@ export default async function (req: Request) {
     const res = await rest(`groups?id=eq.${body.id}`, { method: 'DELETE' });
     if (!res.ok) return json({ error: 'delete_failed' }, 502);
     await audit('group_delete', 'group', String(body.id), {});
+    return json({ ok: true });
+  }
+
+  // ======================= PLATFORM CONTROLS =======================
+
+  if (action === 'config_upsert') {
+    const key = String(body.key || '');
+    if (!key || typeof body.value !== 'object' || body.value === null) return json({ error: 'bad_request' }, 400);
+    const isPublic = !!body.is_public;
+    const cur = await getOne('app_config', `key=eq.${encodeURIComponent(key)}&select=version,value`);
+    const version = (Number(cur?.version) || 0) + 1;
+    // Snapshot the previous value first (if any) so it can be rolled back to.
+    if (cur) {
+      await rest('app_config_history', { method: 'POST',
+        body: JSON.stringify([{ config_key: key, value: cur.value, version: Number(cur.version) || 0, created_by: callerId }]) });
+    }
+    const res = await rest('app_config', {
+      method: 'POST', headers: { Prefer: 'resolution=merge-duplicates' },
+      body: JSON.stringify([{ key, value: body.value, is_public: isPublic, version, updated_by: callerId, updated_at: new Date().toISOString() }]),
+    });
+    if (!res.ok) { console.error('config_upsert', res.status, await res.text()); return json({ error: 'save_failed' }, 502); }
+    await audit('config_upsert', 'config', key, { version, is_public: isPublic });
+    return json({ ok: true, version });
+  }
+
+  if (action === 'config_rollback') {
+    const key = String(body.key || '');
+    const version = asInt(body.version, 1, 1e9);
+    if (!key || version === null) return json({ error: 'bad_request' }, 400);
+    const snap = await getOne('app_config_history', `config_key=eq.${encodeURIComponent(key)}&version=eq.${version}&select=value`);
+    if (!snap) return json({ error: 'version_not_found' }, 404);
+    const cur = await getOne('app_config', `key=eq.${encodeURIComponent(key)}&select=version,value,is_public`);
+    const nextVersion = (Number(cur?.version) || 0) + 1;
+    if (cur) {
+      await rest('app_config_history', { method: 'POST',
+        body: JSON.stringify([{ config_key: key, value: cur.value, version: Number(cur.version) || 0, created_by: callerId }]) });
+    }
+    const res = await rest('app_config', {
+      method: 'POST', headers: { Prefer: 'resolution=merge-duplicates' },
+      body: JSON.stringify([{ key, value: snap.value, is_public: cur?.is_public ?? false, version: nextVersion, updated_by: callerId, updated_at: new Date().toISOString() }]),
+    });
+    if (!res.ok) return json({ error: 'rollback_failed' }, 502);
+    await audit('config_rollback', 'config', key, { restored_from: version, version: nextVersion });
+    return json({ ok: true, version: nextVersion });
+  }
+
+  if (action === 'maintenance_set') {
+    const enabled = !!body.enabled;
+    const message = typeof body.message === 'string' ? body.message : '';
+    const minBuild = asInt(body.min_build, 0, 1e9) ?? 0;
+    const res = await rest('maintenance_state?id=eq.true', {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled, message, min_build: minBuild, updated_by: callerId, updated_at: new Date().toISOString() }),
+    });
+    if (!res.ok) { console.error('maintenance_set', res.status, await res.text()); return json({ error: 'update_failed' }, 502); }
+    await audit('maintenance_set', 'maintenance', null, { enabled, min_build: minBuild });
+    return json({ ok: true });
+  }
+
+  if (action === 'broadcast_create') {
+    const title = String(body.title || '').trim();
+    if (!title) return json({ error: 'title_required' }, 400);
+    const row = {
+      title, body: typeof body.body === 'string' ? body.body : '',
+      kind: typeof body.kind === 'string' ? body.kind : 'announcement',
+      audience: (body.audience && typeof body.audience === 'object') ? body.audience : {},
+      created_by: callerId,
+    };
+    const res = await rest('broadcasts', { method: 'POST', body: JSON.stringify([row]) });
+    if (!res.ok) { console.error('broadcast_create', res.status, await res.text()); return json({ error: 'save_failed' }, 502); }
+    await audit('broadcast_create', 'broadcast', null, { title, kind: row.kind });
     return json({ ok: true });
   }
 
