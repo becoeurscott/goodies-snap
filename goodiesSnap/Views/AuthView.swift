@@ -27,6 +27,7 @@ struct AuthView: View {
     /// Only show validation once a field has been visited, so it never scolds you up front.
     @State private var touchedEmail = false
     @State private var touchedPassword = false
+    @State private var termsNudge = false
     @FocusState private var focus: Field?
 
     private enum Field { case name, email, password }
@@ -341,6 +342,11 @@ struct AuthView: View {
                     .foregroundStyle(Color.gsFg)
                 Text("Apple").font(nunito(13.5, .extrabold)).foregroundStyle(Color.gsFg)
             } action: {
+                if isSignUp && !acceptedTerms {
+                    withAnimation(AppStore.stepAnimation) { termsNudge = true }
+                    Haptics.notify(.warning)
+                    return
+                }
                 store.showToast("Apple sign-in isn't set up yet", seconds: 2.4)
             }
 
@@ -348,6 +354,11 @@ struct AuthView: View {
                 GoogleGlyph().frame(width: 18, height: 18)
                 Text("Google").font(nunito(13.5, .extrabold)).foregroundStyle(Color.gsFg)
             } action: {
+                if isSignUp && !acceptedTerms {
+                    withAnimation(AppStore.stepAnimation) { termsNudge = true }
+                    Haptics.notify(.warning)
+                    return
+                }
                 Task { await handleGoogleSignIn() }
             }
         }
@@ -358,6 +369,7 @@ struct AuthView: View {
         Button(action: action) {
             HStack(spacing: 8) { label() }
                 .frame(maxWidth: .infinity, minHeight: 50)
+                .contentShape(Rectangle())
                 .background(Color.gsCard)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .overlay(
@@ -365,7 +377,7 @@ struct AuthView: View {
                         .strokeBorder(Color.gsFg.opacity(0.12), lineWidth: 1.5)
                 )
         }
-        .buttonStyle(PressableStyle(scale: 0.96))
+        .buttonStyle(PressableStyle(scale: 0.92))
     }
 
     /// Footer link that flips modes, like the reference's "Joined us before? Login".
@@ -378,6 +390,7 @@ struct AuthView: View {
             Button(isSignUp ? "Sign in" : "Create one") {
                 withAnimation(AppStore.stepAnimation) {
                     mode = isSignUp ? .signIn : .signUp
+                    termsNudge = false
                 }
                 social.errorMessage = ""
             }
@@ -395,19 +408,19 @@ struct AuthView: View {
             Button {
                 Haptics.tap(.light)
                 acceptedTerms.toggle()
+                if acceptedTerms { termsNudge = false }
             } label: {
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: acceptedTerms ? "checkmark.square.fill" : "square")
                         .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(acceptedTerms ? Color.gsAccentInk : Color.gsMuted)
-                    // Compact wording keeps the required agreement to two lines; the full
-                    // rules live in the linked documents below.
+                        .foregroundStyle(acceptedTerms ? Color.gsAccentInk
+                                         : termsNudge ? Color.gsAccentInk : Color.gsMuted)
                     (Text("I agree to the ")
-                        .foregroundStyle(Color.gsMuted)
+                        .foregroundStyle(termsNudge && !acceptedTerms ? Color.gsAccentInk : Color.gsMuted)
                      + Text("Terms").foregroundStyle(Color.gsAccentInk)
-                     + Text(" and ").foregroundStyle(Color.gsMuted)
+                     + Text(" and ").foregroundStyle(termsNudge && !acceptedTerms ? Color.gsAccentInk : Color.gsMuted)
                      + Text("Privacy Policy").foregroundStyle(Color.gsAccentInk)
-                     + Text(", and the community rules.").foregroundStyle(Color.gsMuted))
+                     + Text(", and the community rules.").foregroundStyle(termsNudge && !acceptedTerms ? Color.gsAccentInk : Color.gsMuted))
                         .font(nunito(11.5, .semibold))
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
@@ -418,6 +431,13 @@ struct AuthView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Agree to the Terms of Use, Privacy Policy and community rules")
             .accessibilityAddTraits(acceptedTerms ? [.isSelected] : [])
+
+            if termsNudge && !acceptedTerms {
+                Text("You must accept the terms to continue")
+                    .font(nunito(11.5, .bold))
+                    .foregroundStyle(Color.gsAccentInk)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
 
             HStack(spacing: 16) {
                 Link("Terms of Use", destination: Legal.terms)
@@ -430,10 +450,6 @@ struct AuthView: View {
     }
 
     private func handleGoogleSignIn() async {
-        if isSignUp && !acceptedTerms {
-            store.showToast("Please accept the terms first", seconds: 2.4)
-            return
-        }
         guard let rootVC = UIApplication.shared.connectedScenes
             .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController })
             .first else { return }

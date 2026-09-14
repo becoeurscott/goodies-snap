@@ -3,12 +3,11 @@
  *
  * The iOS app sends the Google ID token from the Google Sign-In SDK.
  * This function verifies the token with Google, creates or finds the InsForge
- * user, creates a session, and returns the same shape the app already expects.
+ * user, and returns session tokens.
  *
- * For NEW users: creates the account with a server-side password and signs in.
- * For EXISTING users: updates their password (the Google token proves email
- * ownership) and signs in. This means an email+password user who switches to
- * Google sign-in will need Google (or a password reset) going forward.
+ * For NEW users: creates the account and uses the tokens from the creation response.
+ * For EXISTING users: mints a JWT directly using the JWT_SECRET (the Google token
+ * already proves email ownership, so this is a verified identity assertion).
  */
 
 const CORS = {
@@ -28,14 +27,39 @@ function serverPassword(googleSub: string, secret: string): string {
   return `gsi_${googleSub}_${secret.slice(0, 16)}`;
 }
 
+async function signJWT(
+  payload: Record<string, unknown>,
+  secret: string,
+): Promise<string> {
+  const enc = new TextEncoder();
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const b64 = (buf: ArrayBuffer | Uint8Array) =>
+    btoa(String.fromCharCode(...new Uint8Array(buf)))
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
+  const h = b64(enc.encode(JSON.stringify(header)));
+  const p = b64(enc.encode(JSON.stringify(payload)));
+  const data = enc.encode(`${h}.${p}`);
+  const key = await crypto.subtle.importKey(
+    'raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, data);
+  return `${h}.${p}.${b64(sig)}`;
+}
+
 export default async function (req: Request) {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
 
   const baseURL = Deno.env.get('INSFORGE_BASE_URL');
   const adminKey = Deno.env.get('API_KEY');
+  const anonKey = Deno.env.get('ANON_KEY');
+  const jwtSecret = Deno.env.get('JWT_SECRET');
   const googleClientID = Deno.env.get('GOOGLE_CLIENT_ID');
-  if (!baseURL || !adminKey) return json({ error: 'server_not_configured' }, 503);
+  const googleIOSClientID = Deno.env.get('GOOGLE_IOS_CLIENT_ID');
+  if (!baseURL || !adminKey || !anonKey || !jwtSecret)
+    return json({ error: 'server_not_configured' }, 503);
 
   let body: { id_token?: string; name?: string };
   try { body = await req.json(); } catch { return json({ error: 'bad_request' }, 400); }
@@ -50,7 +74,8 @@ export default async function (req: Request) {
   if (!verifyRes.ok) return json({ error: 'invalid_google_token' }, 401);
   const gUser = await verifyRes.json();
 
-  if (googleClientID && gUser.aud !== googleClientID) {
+  const allowedAudiences = [googleClientID, googleIOSClientID].filter(Boolean);
+  if (allowedAudiences.length > 0 && !allowedAudiences.includes(gUser.aud)) {
     return json({ error: 'token_audience_mismatch' }, 401);
   }
 
@@ -72,22 +97,38 @@ export default async function (req: Request) {
 
   let userId: string;
   let isNew = false;
+  let accessToken: string;
+  let refreshToken: string;
 
   if (existing?.id) {
+    // Existing user — mint a JWT directly. The Google token already proved
+    // email ownership, so this is a verified identity assertion.
     userId = existing.id;
-    // Set the password so we can create a session. The Google token already
-    // proved email ownership, so this is equivalent to a verified password reset.
-    await fetch(`${baseURL}/api/auth/users/${userId}`, {
-      method: 'PATCH',
-      headers: admin,
-      body: JSON.stringify({ password }),
-    });
+    const now = Math.floor(Date.now() / 1000);
+    const accessPayload = {
+      sub: userId,
+      email,
+      iat: now,
+      exp: now + 3600,
+      iss: 'insforge',
+      'x-insforge-role': 'authenticated',
+    };
+    const refreshPayload = {
+      sub: userId,
+      email,
+      iat: now,
+      exp: now + 30 * 24 * 3600,
+      iss: 'insforge',
+      type: 'refresh',
+    };
+    accessToken = await signJWT(accessPayload, jwtSecret);
+    refreshToken = await signJWT(refreshPayload, jwtSecret);
   } else {
-    // 3. Create a new user.
-    const createRes = await fetch(`${baseURL}/api/auth/users`, {
+    // 3. Create a new user and sign in with the deterministic password.
+    const createRes = await fetch(`${baseURL}/api/auth/users?client_type=mobile`, {
       method: 'POST',
-      headers: admin,
-      body: JSON.stringify({ email, password, name, email_verified: true }),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${anonKey}` },
+      body: JSON.stringify({ email, password, name }),
     });
     if (!createRes.ok) {
       const detail = await createRes.text();
@@ -97,24 +138,32 @@ export default async function (req: Request) {
     const created = await createRes.json();
     userId = created.id ?? created.user?.id;
     isNew = true;
-  }
 
-  // 4. Create a session via the normal sign-in endpoint.
-  const sessionRes = await fetch(`${baseURL}/api/auth/sessions?client_type=web`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminKey}` },
-    body: JSON.stringify({ method: 'password', email, password }),
-  });
-  if (!sessionRes.ok) {
-    const detail = await sessionRes.text();
-    console.error('google-auth: session creation failed', sessionRes.status, detail);
-    return json({ error: 'session_creation_failed' }, 500);
+    // The creation response may already include tokens.
+    if (created.accessToken) {
+      accessToken = created.accessToken;
+      refreshToken = created.refreshToken;
+    } else {
+      // Sign in with the password we just set.
+      const sessionRes = await fetch(`${baseURL}/api/auth/sessions?client_type=mobile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${anonKey}` },
+        body: JSON.stringify({ method: 'password', email, password }),
+      });
+      if (!sessionRes.ok) {
+        const detail = await sessionRes.text();
+        console.error('google-auth: session creation failed', sessionRes.status, detail);
+        return json({ error: 'session_creation_failed' }, 500);
+      }
+      const session = await sessionRes.json();
+      accessToken = session.accessToken;
+      refreshToken = session.refreshToken;
+    }
   }
-  const session = await sessionRes.json();
 
   return json({
-    accessToken: session.accessToken,
-    refreshToken: session.refreshToken,
+    accessToken,
+    refreshToken,
     user: { id: userId, name },
     is_new_user: isNew,
   });
