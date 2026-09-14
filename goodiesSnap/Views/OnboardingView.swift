@@ -4,22 +4,37 @@ struct OnboardingView: View {
     @EnvironmentObject var store: AppStore
 
     struct Page {
-        let emoji: String
+        let photos: [String]
         let title: String
         let subtitle: String
         let bgColor: Color
     }
 
     static let pages: [Page] = [
-        Page(emoji: "🍔🍟🥤🍕",
+        Page(photos: [
+                "https://www.themealdb.com/images/media/meals/adxcbq1619787919.jpg",
+                "https://www.themealdb.com/images/media/meals/mlchx21564916997.jpg",
+                "https://www.themealdb.com/images/media/meals/wvpsxx1468256321.jpg",
+                "https://www.themealdb.com/images/media/meals/58oia61564916529.jpg",
+             ],
              title: "Save Your Favorite\nRecipes Instantly",
              subtitle: "Snap a dish, paste a link or a video —\nthe AI reads it and saves a clean recipe card.",
              bgColor: Color(hex: 0xFFF3E0)),
-        Page(emoji: "👨‍🍳🍳📖✨",
+        Page(photos: [
+                "https://www.themealdb.com/images/media/meals/z0ageb1583189517.jpg",
+                "https://www.themealdb.com/images/media/meals/1525876468.jpg",
+                "https://www.themealdb.com/images/media/meals/ebvuir1699013665.jpg",
+                "https://www.themealdb.com/images/media/meals/txsupu1511815755.jpg",
+             ],
              title: "Cook Step by Step\nHands-Free",
              subtitle: "One generous step at a time, timers built in —\nno scrolling back with sticky fingers.",
              bgColor: Color(hex: 0xFFF8E1)),
-        Page(emoji: "📋🛒📅⭐",
+        Page(photos: [
+                "https://www.themealdb.com/images/media/meals/1529444830.jpg",
+                "https://www.themealdb.com/images/media/meals/n3xxd91598732796.jpg",
+                "https://www.themealdb.com/images/media/meals/hqaejl1695738653.jpg",
+                "https://www.themealdb.com/images/media/meals/tkxquw1628771028.jpg",
+             ],
              title: "Plan Your Week &\nShop Smart",
              subtitle: "Drop dinners onto your week and the\nshopping list writes itself, sorted by aisle.",
              bgColor: Color(hex: 0xFFF3E0)),
@@ -106,13 +121,30 @@ struct OnboardingView: View {
         VStack(spacing: 0) {
             Spacer(minLength: 20)
 
-            // Illustration circle
-            ZStack {
-                Circle()
-                    .fill(page.bgColor)
-                    .frame(width: 220, height: 220)
-                Text(page.emoji)
-                    .font(.system(size: 52))
+            // Photo grid
+            let spacing: CGFloat = 8
+            let tileSize: CGFloat = 120
+            VStack(spacing: spacing) {
+                ForEach(0..<2, id: \.self) { row in
+                    HStack(spacing: spacing) {
+                        ForEach(0..<2, id: \.self) { col in
+                            let idx = row * 2 + col
+                            if idx < page.photos.count, let url = URL(string: page.photos[idx]) {
+                                AsyncImage(url: url) { phase in
+                                    switch phase {
+                                    case .success(let image):
+                                        image.resizable().aspectRatio(contentMode: .fill)
+                                    default:
+                                        page.bgColor
+                                    }
+                                }
+                                .frame(width: tileSize, height: tileSize)
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            }
+                        }
+                    }
+                }
             }
             .padding(.bottom, 40)
 

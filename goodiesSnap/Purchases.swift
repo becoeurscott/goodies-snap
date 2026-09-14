@@ -80,11 +80,10 @@ final class Purchases: ObservableObject {
         defer { loading = false }
         do {
             let loaded = try await Product.products(for: ProductID.all)
-            // Cheapest first so the paywall's ordering is stable regardless of the order
-            // StoreKit returns.
             products = loaded.sorted { $0.price < $1.price }
+            print("[Purchases] loaded \(products.count) products: \(products.map(\.id))")
         } catch {
-            // Non-fatal: the paywall falls back to its hard-coded price labels.
+            print("[Purchases] loadProducts failed: \(error)")
             products = []
         }
     }

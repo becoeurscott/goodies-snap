@@ -8,6 +8,8 @@ struct Reel: Identifiable, Equatable {
     enum Source: Equatable {
         case upload(URL)
         case youtube(String)
+        /// A community photo (or recipe) post with no video — shown as a full-screen still page.
+        case photo(URL)
     }
 
     let id: String
@@ -26,6 +28,28 @@ struct Reel: Identifiable, Equatable {
     let post: FeedPost?
 
     var isUpload: Bool { if case .upload = source { return true } else { return false } }
+    var isPhoto: Bool { if case .photo = source { return true } else { return false } }
+    var isYouTube: Bool { if case .youtube = source { return true } else { return false } }
+    /// Community content (a real user's post: video upload or photo), as opposed to a catalog
+    /// YouTube reel. This is what the Community lane shows.
+    var isCommunity: Bool { post != nil }
+
+    /// A community photo/recipe post with no video — shown as a still page in the feed. Fails
+    /// when the post carries a video (that's an `upload` reel) or has no image at all.
+    init?(photo post: FeedPost) {
+        guard post.videoURL == nil, let image = post.imageURL else { return nil }
+        self.id = post.id
+        self.source = .photo(image)
+        self.authorID = post.author_id
+        self.authorName = post.author_name
+        self.caption = post.caption
+        self.recipe = post.recipe
+        self.thumbURL = image
+        self.likeCount = post.like_count
+        self.commentCount = post.comment_count
+        self.createdAt = post.created_at
+        self.post = post
+    }
 
     /// Uploaded reel from a feed post. Fails when the row has no playable video.
     init?(upload post: FeedPost) {

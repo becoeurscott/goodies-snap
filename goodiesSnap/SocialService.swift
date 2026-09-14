@@ -225,6 +225,15 @@ enum SocialAPI {
                       token: token)
     }
 
+    /// Community photo/recipe posts (everything a real user shared that isn't a video reel),
+    /// for the Community lane's still pages. Requires an image so a page always has something
+    /// to show; RLS already drops blocked authors and hidden rows.
+    static func fetchCommunityPosts(token: String, limit: Int = 60) async throws -> [FeedPost] {
+        try await get("posts",
+                      query: "kind=neq.reel&image_url=not.is.null&hidden_at=is.null&order=created_at.desc&limit=\(limit)",
+                      token: token)
+    }
+
     /// Uploads a reel clip to the public reel-videos bucket and returns its object URL.
     static func uploadReelVideo(_ data: Data, token: String, userID: String) async throws -> String {
         let key = "\(userID)-\(Int(Date().timeIntervalSince1970 * 1000)).mp4"

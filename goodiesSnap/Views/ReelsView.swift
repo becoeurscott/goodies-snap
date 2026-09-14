@@ -44,8 +44,8 @@ struct ReelsView: View {
 
     private var reels: [Reel] {
         switch lane {
-        case .community: return social.reels.filter { $0.isUpload }
-        case .recipes:   return social.reels.filter { !$0.isUpload }
+        case .community: return social.reels.filter { $0.isCommunity }
+        case .recipes:   return social.reels.filter { $0.isYouTube }
         }
     }
 
@@ -69,7 +69,7 @@ struct ReelsView: View {
             await social.loadReels()
             // Don't open on an empty lane: with nobody posting yet, Community is blank and the
             // feed looks broken. Land on whichever lane actually has something to play.
-            if social.reels.contains(where: { $0.isUpload }) == false { lane = .recipes }
+            if social.reels.contains(where: { $0.isCommunity }) == false { lane = .recipes }
             if activeID == nil { activeID = reels.first?.id }
         }
         .onChange(of: lane) { _, _ in
@@ -79,7 +79,7 @@ struct ReelsView: View {
         // Opening a creator's reel from their profile grid jumps the feed to it.
         .onChange(of: store.reelFocusID) { _, id in
             guard let id else { return }
-            if social.reels.first(where: { $0.id == id })?.isUpload == false { lane = .recipes }
+            if social.reels.first(where: { $0.id == id })?.isYouTube == true { lane = .recipes }
             else { lane = .community }
             withAnimation { activeID = id }
             store.reelFocusID = nil
@@ -241,7 +241,8 @@ private struct ReelCell: View {
             // YouTube players mount only when active: a preloaded-then-resumed embed can stall
             // in a paused state that keeps showing YouTube's chrome, whereas a fresh mount
             // starts playing cleanly under the poster.
-            if reel.isUpload ? shouldLoad : isActive {
+            // Photo pages have no player — the poster image is the page.
+            if (reel.isUpload && shouldLoad) || (reel.isYouTube && isActive) {
                 player.ignoresSafeArea()
             }
 
@@ -270,7 +271,7 @@ private struct ReelCell: View {
             .padding(.bottom, 34)
             .frame(maxHeight: .infinity, alignment: .bottom)
 
-            if muted {
+            if muted && !reel.isPhoto {
                 // The whole page toggles sound, so say which state you're in.
                 Image(systemName: "speaker.slash.fill")
                     .font(.system(size: 15, weight: .bold))
@@ -281,7 +282,8 @@ private struct ReelCell: View {
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture { onToggleMute() }
+        // Tap toggles sound on video pages; a photo page has no audio, so tapping does nothing.
+        .onTapGesture { if !reel.isPhoto { onToggleMute() } }
         .onChange(of: shouldLoad) { _, loading in
             // When the cell scrolls out of the preload window its player is torn down, so the
             // next time it mounts it must re-earn "ready" rather than lift the poster instantly.
@@ -320,6 +322,8 @@ private struct ReelCell: View {
             // Lift the poster the moment playback starts; armYouTubePoster re-covers on activation.
             ReelYouTubePlayer(videoID: id, isActive: isActive, isMuted: muted,
                               onReady: { if isActive { videoReady = true } })
+        case .photo:
+            EmptyView()   // a photo page is just its poster image
         }
     }
 
@@ -338,7 +342,7 @@ private struct ReelCell: View {
             } else {
                 ReelStyle.ground
             }
-        case .upload:
+        case .upload, .photo:
             if let thumb = reel.thumbURL {
                 CoverImage(url: thumb)
             } else {
@@ -447,7 +451,7 @@ private struct ReelCell: View {
                 social.toggleReelLike(reel)
             }
 
-            if reel.isUpload {
+            if reel.isCommunity {
                 railButton(system: "bubble.right.fill", tint: .white,
                            count: reel.commentCount) {
                     guard social.session != nil else { store.showAuth(.community); return }

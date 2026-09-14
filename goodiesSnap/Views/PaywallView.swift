@@ -182,13 +182,10 @@ struct PaywallView: View {
     }
 
     private func choose(_ offer: Offer) {
-        // A plan is attached to an account, not a handset — without one there is nowhere
-        // for the entitlement to live, and it would be lost on reinstall.
         guard store.isAuthenticated else {
             store.showAuth(.upgrade)
             return
         }
-        // With the trial switched on, a Pro choice starts the free week instead of billing.
         if trialOn, offer.plan == .pro, store.entitlement.canStartTrial {
             store.startProTrial()
             return
@@ -203,11 +200,8 @@ struct PaywallView: View {
     @MainActor
     private func buy(_ offer: Offer) async {
         guard purchases.product(for: offer.plan, annual: offer.annual) != nil else {
-            #if DEBUG
-            store.debugUnlock(offer.plan, annual: offer.annual)
-            #else
+            print("[Paywall] No StoreKit product for \(offer.plan) annual=\(offer.annual). Loaded: \(purchases.products.map(\.id))")
             store.showToast("Subscriptions aren’t available right now. Please try again shortly.")
-            #endif
             return
         }
         switch await purchases.purchase(plan: offer.plan, annual: offer.annual) {
@@ -283,37 +277,39 @@ struct PlanTabCard: View {
         VStack(alignment: .leading, spacing: 0) {
             // Tab row: name + price on the raised left, Choose in the right-hand notch.
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(offer.name)
-                        .font(nunito(13, .bold))
-                        .foregroundStyle(style.sub)
-                    HStack(alignment: .firstTextBaseline, spacing: 3) {
-                        Text(offer.price)
-                            .font(nunito(30, .black))
-                            .foregroundStyle(style.ink)
-                        Text(offer.cadence)
-                            .font(nunito(12, .bold))
+                Button(action: onSelect) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(offer.name)
+                            .font(nunito(13, .bold))
                             .foregroundStyle(style.sub)
-                    }
-                    if isCurrent {
-                        HStack(spacing: 5) {
-                            Image(systemName: "clock").font(.system(size: 10, weight: .bold))
-                            Text(renewal).font(nunito(11.5, .extrabold))
+                        HStack(alignment: .firstTextBaseline, spacing: 3) {
+                            Text(offer.price)
+                                .font(nunito(30, .black))
+                                .foregroundStyle(style.ink)
+                            Text(offer.cadence)
+                                .font(nunito(12, .bold))
+                                .foregroundStyle(style.sub)
                         }
-                        .foregroundStyle(style.ink.opacity(0.75))
-                    } else if let introPrice {
-                        Text("First month \(introPrice)")
-                            .font(nunito(11.5, .extrabold))
-                            .foregroundStyle(style.ink)
+                        if isCurrent {
+                            HStack(spacing: 5) {
+                                Image(systemName: "clock").font(.system(size: 10, weight: .bold))
+                                Text(renewal).font(nunito(11.5, .extrabold))
+                            }
+                            .foregroundStyle(style.ink.opacity(0.75))
+                        } else if let introPrice {
+                            Text("First month \(introPrice)")
+                                .font(nunito(11.5, .extrabold))
+                                .foregroundStyle(style.ink)
+                        }
                     }
                 }
+                .buttonStyle(.plain)
                 .padding(.top, 18)
 
                 Spacer(minLength: 12)
 
                 Group {
                     if isCurrent {
-                        // Already on this plan: an inert chip, not a button you can press again.
                         HStack(spacing: 6) {
                             Image(systemName: "checkmark").font(.system(size: 11, weight: .black))
                             Text("Active").font(nunito(14, .extrabold))
@@ -334,7 +330,7 @@ struct PlanTabCard: View {
                                 .background(style.button)
                                 .clipShape(Capsule())
                         }
-                        .buttonStyle(PressableStyle(scale: 0.95))
+                        .buttonStyle(PressableStyle(scale: 0.96))
                     }
                 }
                 .padding(.top, step + 12)
@@ -372,11 +368,11 @@ struct PlanTabCard: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(style.fill)
+        .background(TabCardShape(step: step).fill(style.fill))
+        .compositingGroup()
         .clipShape(TabCardShape(step: step))
+        .contentShape(Rectangle())
         .shadow(color: .black.opacity(expanded ? 0.16 : 0.08), radius: 16, y: 8)
-        .contentShape(TabCardShape(step: step))
-        .onTapGesture(perform: onSelect)
         .animation(AppStore.stepAnimation, value: expanded)
     }
 }

@@ -272,17 +272,23 @@ final class SocialStore: ObservableObject {
         guard reels.isEmpty || force else { return }
         reelsLoading = reels.isEmpty
         var uploaded: [FeedPost] = []
+        var community: [FeedPost] = []
         if session != nil {
             do {
-                (uploaded, likedPostIDs) = try await authed { s in
+                (uploaded, community, likedPostIDs) = try await authed { s in
                     async let r = SocialAPI.fetchReels(token: s.accessToken)
+                    async let p = SocialAPI.fetchCommunityPosts(token: s.accessToken)
                     async let l = SocialAPI.fetchMyLikes(token: s.accessToken, userID: s.userID)
-                    return try await (r, l)
+                    return try await (r, p, l)
                 }
             } catch { handle(error) }
         }
         let youtube = (try? await CatalogService.reelRecipes(limit: 30)) ?? []
-        var items = uploaded.compactMap { Reel(upload: $0) }
+        // Community lane: video uploads + photo/recipe posts, newest first (one page each).
+        var communityReels = uploaded.compactMap { Reel(upload: $0) }
+        communityReels += community.compactMap { Reel(photo: $0) }
+        communityReels.sort { $0.createdAt > $1.createdAt }
+        var items = communityReels
         items += youtube.map { Reel(youtube: $0) }
         withAnimation(AppStore.lateralAnimation) { self.reels = items }
         reelsLoading = false
@@ -312,7 +318,7 @@ final class SocialStore: ObservableObject {
     }
 
     func isReelLiked(_ reel: Reel) -> Bool {
-        reel.isUpload ? likedPostIDs.contains(reel.id) : likedYouTubeReelIDs.contains(reel.id)
+        reel.isCommunity ? likedPostIDs.contains(reel.id) : likedYouTubeReelIDs.contains(reel.id)
     }
 
     /// Likes/unlikes a reel. Uploaded reels hit the server; YouTube reels toggle a local set.
@@ -323,7 +329,7 @@ final class SocialStore: ObservableObject {
         withAnimation(AppStore.stepAnimation) {
             reels[idx].likeCount = max(0, reels[idx].likeCount + (wasLiked ? -1 : 1))
         }
-        if reel.isUpload {
+        if reel.isCommunity {
             if wasLiked { likedPostIDs.remove(reel.id) } else { likedPostIDs.insert(reel.id) }
             guard session != nil else { return }
             Task {
@@ -380,9 +386,9 @@ final class SocialStore: ObservableObject {
         }
     }
 
-    /// Deletes the current user's uploaded reel.
+    /// Deletes the current user's community reel (video or photo post).
     func deleteReel(_ reel: Reel) {
-        guard reel.isUpload, session != nil else { return }
+        guard reel.isCommunity, session != nil else { return }
         withAnimation(AppStore.sheetAnimation) { reels.removeAll { $0.id == reel.id } }
         Task {
             do { try await authed { s in try await SocialAPI.deletePost(id: reel.id, token: s.accessToken) } }
