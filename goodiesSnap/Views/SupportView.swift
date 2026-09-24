@@ -97,7 +97,7 @@ struct SupportView: View {
                 .padding(.top, 24)
 
                 Link(destination: Legal.support) {
-                    Text("Or email us at support@goodiessnap.app")
+                    Text("Or email us at contact@goodiessnap.com")
                         .font(nunito(12, .semibold))
                         .foregroundStyle(Color.fg(0.45))
                         .frame(maxWidth: .infinity)

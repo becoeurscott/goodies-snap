@@ -336,7 +336,7 @@ enum RecipeExtractor {
             request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
             request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
             // OpenRouter attributes traffic with these; they show up on the dashboard.
-            request.setValue("https://goodiessnap.app", forHTTPHeaderField: "HTTP-Referer")
+            request.setValue("https://goodiessnap.com", forHTTPHeaderField: "HTTP-Referer")
             request.setValue("goodiesSnap", forHTTPHeaderField: "X-Title")
             body = [
                 "model": provider.model,

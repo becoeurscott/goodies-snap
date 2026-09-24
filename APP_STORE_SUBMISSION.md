@@ -35,9 +35,8 @@ Key facts App Review will test:
 - ✅ `ITSAppUsesNonExemptEncryption = false` in Info.plist.
 - ⚠️ **Fill legal placeholders** in Terms/Privacy: legal entity name, registered address,
   governing law, `legal@`/`privacy@` addresses. Drafts need a lawyer's review.
-- ⚠️ **Support email must exist.** Pages use `support@goodiessnap.app`, which does **not**
-  exist. Create a real mailbox (App Review emails it). Do not publish a personal address
-  without deciding to.
+- ✅ **Support email:** app and pages use `contact@goodiessnap.com` (the domain's existing
+  mailbox; `goodiessnap.app` was never registered). App Review emails it — check it.
 - ⬜ In App Store Connect: set **Privacy Policy URL** and **Support URL** to live pages.
 - ⬜ Complete the **App Privacy "nutrition label"** questionnaire — must match
   `PrivacyInfo.xcprivacy` (email, name, user ID, photos, user content; linked; no tracking).
