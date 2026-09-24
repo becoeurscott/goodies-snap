@@ -222,12 +222,17 @@ export default async function (req: Request): Promise<Response> {
     const e = ent[0] ?? {};
     const day = (v: unknown) => (v ? String(v).slice(0, 10) : 'none');
     const plan = String(e.plan ?? 'free');
-    const allowance = plan === 'pro' ? 400 : plan === 'plus' ? 100 : 5;
     const onTrial = e.trial_until && new Date(String(e.trial_until)) > new Date();
+    // Mirrors plan_allowance()/trial_allowance() in the database; a trial has its own small cap.
+    const allowance = onTrial && plan === 'free' ? 5 : plan === 'pro' ? 400 : plan === 'plus' ? 100 : 5;
+    const used = Number(e.used ?? 0);
+    const topUp = Number(e.top_up ?? 0);
+    // Do the arithmetic here: a 3B model asked for "100 minus 42" answers 6 surprisingly often.
+    const remaining = Math.max(0, allowance - used) + topUp;
     const lines = [
       `- Name: ${p.display_name ?? 'unknown'}; member since ${day(p.created_at)}`,
       `- Plan: ${plan}${onTrial ? ` (Pro trial until ${day(e.trial_until)})` : ''}`,
-      `- AI actions this month (${e.period ?? 'current'}): ${Number(e.used ?? 0)} used of ${allowance}; top-up balance ${Number(e.top_up ?? 0)}`,
+      `- AI actions remaining right now: ${remaining} (this month ${used} used of ${allowance} included, plus ${topUp} top-up)`,
     ];
     if (subs.length === 0) lines.push('- App Store subscription: none on record');
     subs.forEach((s) => lines.push(
