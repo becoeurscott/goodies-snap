@@ -130,6 +130,9 @@ chmod 640 /etc/caddy/Caddyfile
 mkdir -p /var/log/caddy && chown caddy:caddy /var/log/caddy
 
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+# validate runs as root and opens the log file, leaving it root-owned; the caddy service
+# user then can't write it and refuses to start.
+chown -R caddy:caddy /var/log/caddy
 systemctl enable caddy >/dev/null
 systemctl reload caddy 2>/dev/null || systemctl restart caddy
 
