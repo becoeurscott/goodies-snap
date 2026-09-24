@@ -123,7 +123,42 @@ function parseReply(raw: string): { reply: string; handoff: boolean } | null {
   return text ? { reply: text, handoff: false } : null;
 }
 
+/**
+ * The platform's gateway drops a request that sends nothing for 30 seconds, but a CPU-only
+ * VPS can take longer than that to answer. Anything quick (errors, handoffs, history) is
+ * returned as is, with its real status. A slow answer is streamed instead: a space every few
+ * seconds keeps the connection open — JSON allows leading whitespace — then the real body.
+ */
+const QUICK_MS = 2_000;
+const HEARTBEAT_MS = 5_000;
+
 export default async function (req: Request): Promise<Response> {
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+  const pending = handle(req);
+  const quick = await Promise.race([pending, new Promise<null>((r) => setTimeout(() => r(null), QUICK_MS))]);
+  if (quick) return quick;
+
+  const enc = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const beat = setInterval(() => controller.enqueue(enc.encode(' ')), HEARTBEAT_MS);
+      try {
+        controller.enqueue(enc.encode(' '));
+        const res = await pending;
+        controller.enqueue(enc.encode(await res.text()));
+      } catch (err) {
+        console.error('support stream failed:', err instanceof Error ? err.message : err);
+        controller.enqueue(enc.encode(JSON.stringify({ error: 'support_failed' })));
+      } finally {
+        clearInterval(beat);
+        controller.close();
+      }
+    },
+  });
+  return new Response(stream, { status: 200, headers: { ...CORS, 'Content-Type': 'application/json' } });
+}
+
+async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
 
@@ -262,7 +297,7 @@ export default async function (req: Request): Promise<Response> {
   /** The VPS first; the backup model only when the VPS fails or runs out of time. */
   async function askModel(messages: Msg[], model: string): Promise<Reply | null> {
     const started = Date.now();
-    const timeout = Number(Deno.env.get('SUPPORT_OLLAMA_TIMEOUT_MS') ?? 60_000);
+    const timeout = Number(Deno.env.get('SUPPORT_OLLAMA_TIMEOUT_MS') ?? 45_000);
 
     if (ollamaURL) {
       try {

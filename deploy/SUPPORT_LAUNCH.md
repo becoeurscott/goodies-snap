@@ -25,7 +25,7 @@ From the project root, with the `insforge` CLI linked to **goodiessnap**:
    - `OLLAMA_API_KEY` = the `goodiessnap` key printed by the VPS script
      (on the VPS: `cat /etc/caddy/app-keys/goodiessnap`)
    - `OPENROUTER_API_KEY` is already set for the `ai` function; the backup model reuses it.
-   - Optional: `SUPPORT_OLLAMA_TIMEOUT_MS` (default `60000`), `SUPPORT_FALLBACK_MODEL`
+   - Optional: `SUPPORT_OLLAMA_TIMEOUT_MS` (default `45000`), `SUPPORT_FALLBACK_MODEL`
      (default `anthropic/claude-haiku-4.5`).
 3. **Functions:** deploy `functions/support.ts` (new) and `functions/admin.ts` (updated).
 4. **Admin console:** redeploy `admin/` (Support and Assistant pages).
