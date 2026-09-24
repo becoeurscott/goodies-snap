@@ -4,7 +4,10 @@ import UIKit
 
 @MainActor
 final class AppStore: ObservableObject {
-    enum Phase { case splash, welcome, onboard, preferences, createAccount, preparing, app }
+    /// `.preferences` is no longer part of first run — the value-first flow asks its two
+    /// functional questions inline (see `OnboardingFlow`). It stays reachable for an account
+    /// that signed up before that flow existed and still has no taste profile.
+    enum Phase { case splash, onboard, preferences, createAccount, preparing, app }
     enum Screen { case home, importer, scanIdentify, scanResults, library, detail, cook, shopping, basket, plan, profile, feed, discover, reelProfile, paywall, auth, support }
 
     /// Which way the next screen change should animate.
@@ -23,7 +26,8 @@ final class AppStore: ObservableObject {
 
     // Launch flow
     @Published var phase: Phase = .splash
-    @Published var obIndex = 0
+    /// Everything the value-first onboarding flow collects. See `OnboardingFlow.swift`.
+    @Published var onboard = OnboardState()
     @Published var preferenceIndex = 0
     /// Which way the question flow is travelling, so the slide matches the direction.
     @Published var preferenceForward = true
@@ -164,6 +168,9 @@ final class AppStore: ObservableObject {
     @Published var aiToken: String?
     /// The signed-in user's id, mirrored from SocialStore by RootView.
     @Published var currentUserID: String?
+    /// True when the live token belongs to an onboarding guest rather than a person.
+    /// Mirrored from `SocialStore.isGuest` by RootView.
+    @Published var isGuestSession = false
 
     /// True when AI work can run server-side, where the key lives and the quota is enforced.
     var usesServerAI: Bool { aiToken != nil }
@@ -239,8 +246,10 @@ final class AppStore: ObservableObject {
     /// Every AI entry point goes through here — there is no bypass.
     @discardableResult
     func useAIAction() -> Bool {
-        // An account comes first: the quota belongs to a person, not a handset.
-        guard isAuthenticated else {
+        // An account comes first: the quota belongs to a person, not a handset. The one
+        // exception is an onboarding guest, which *is* a server-side account with its own
+        // quota — it just hasn't got a person's name on it yet.
+        guard isAuthenticated || isGuestSession else {
             showAuth(.aiFeature)
             return false
         }
@@ -757,37 +766,13 @@ final class AppStore: ObservableObject {
         withAnimation(.easeOut(duration: 0.4)) {
             if isAuthenticated {
                 phase = .app
-            } else if hasOnboarded {
+            } else if hasOnboarded || hasCompletedOnboarding {
                 authReason = .general
                 phase = .createAccount
             } else {
-                phase = .welcome
-            }
-        }
-    }
-
-    func startFromWelcome() {
-        withAnimation(.easeOut(duration: 0.4)) { phase = .onboard }
-    }
-
-    func onboardNext() {
-        if obIndex >= 2 {
-            advanceFromOnboarding()
-        } else {
-            withAnimation(.easeOut(duration: 0.35)) { obIndex += 1 }
-        }
-    }
-
-    /// After onboarding (or skipping it): answer the taste profile if it isn't done, then —
-    /// crucially — require an account before the app itself. There is no guest dashboard.
-    private func advanceFromOnboarding() {
-        hasOnboarded = true
-        withAnimation(.easeOut(duration: 0.4)) {
-            if isAuthenticated {
-                phase = preferences.isComplete ? .app : .preferences
-            } else {
-                authReason = .general
-                phase = .createAccount
+                // First launch: straight into the flow. It opens its own guest session, so
+                // the extraction on step 4 can run before any account exists.
+                phase = .onboard
             }
         }
     }
@@ -797,6 +782,7 @@ final class AppStore: ObservableObject {
     /// gated feature.
     func askForAccount() {
         guard phase != .createAccount else { return }
+        hasOnboarded = true
         if isAuthenticated {
             enterApp()
             return
@@ -819,10 +805,41 @@ final class AppStore: ObservableObject {
         Haptics.notify(.success)
         withAnimation(.easeOut(duration: 0.45)) { phase = .app }
         welcome = nil
+        offerUpgradeAfterOnboarding()
     }
 
+    /// The end-of-onboarding pitch, shown once and only once.
+    ///
+    /// It comes here — after the account, after Home exists — rather than straight after the
+    /// first recipe, because by now the user has a saved recipe, a priced list and a planned
+    /// week to judge the offer against. It is fully dismissible: they have not hit a limit,
+    /// so "Continue with Free" has to be as easy as subscribing.
+    private func offerUpgradeAfterOnboarding() {
+        // Nothing built means nothing to pitch against — see `finishOnboarding`.
+        guard hasCompletedOnboarding, !recipes.isEmpty, !hasSeenOnboardingUpgrade else { return }
+        guard entitlement.effectivePlan == .free else {
+            hasSeenOnboardingUpgrade = true
+            return
+        }
+        hasSeenOnboardingUpgrade = true
+        Task { @MainActor [weak self] in
+            // A beat on Home first, so the pitch follows the payoff instead of replacing it.
+            try? await Task.sleep(for: .seconds(1.1))
+            guard let self, self.phase == .app, self.screen == .home else { return }
+            self.showPaywall(.onboardingComplete)
+        }
+    }
+
+    private var hasSeenOnboardingUpgrade: Bool {
+        get { UserDefaults.standard.bool(forKey: "gs_onboarding_upgrade_seen") }
+        set { UserDefaults.standard.set(newValue, forKey: "gs_onboarding_upgrade_seen") }
+    }
+
+    /// "Skip" anywhere in the flow. Whatever it produced so far is already saved, so this
+    /// just jumps to the account step.
     func skipOnboard() {
-        advanceFromOnboarding()
+        hasOnboarded = true
+        finishOnboarding()
     }
 
     func answerPreference(sound: Bool = true, _ apply: (inout UserPreferences) -> Void) {
@@ -831,6 +848,14 @@ final class AppStore: ObservableObject {
             Haptics.tap(.light)
         }
         apply(&preferences)
+        // Derive v1 servings from v2 household size for backward compat
+        switch preferences.householdSize {
+        case "Just me": preferences.servings = 1
+        case "2 people": preferences.servings = 2
+        case "3-4 people": preferences.servings = 4
+        case "5+ people": preferences.servings = 6
+        default: break
+        }
         persist()
     }
 
@@ -1266,17 +1291,130 @@ final class AppStore: ObservableObject {
         return order.map { (id: $0, title: titles[$0] ?? "Added by you", items: buckets[$0] ?? []) }
     }
 
-    /// Total of known prices in a set of items, in cents (items without a price are skipped).
+    /// What one line on the list costs, and whether that number is real or estimated.
+    ///
+    /// A price looked up at the user's actual store always wins. Everything else falls back
+    /// to `IngredientPrices`, which is what lets the app answer "what will this cost me?"
+    /// before Kroger is connected. `isEstimate` is not decoration: every surface that shows
+    /// one of these has to say so.
+    struct ItemPrice: Equatable {
+        let cents: Int
+        let isEstimate: Bool
+    }
+
+    /// Price for a list item — the store's, or the estimate. nil for things that cost
+    /// nothing (water) or that we cannot place at all.
+    func price(for item: ShoppingItem) -> ItemPrice? {
+        if let real = item.priceCents { return ItemPrice(cents: real, isEstimate: false) }
+        guard let est = IngredientPrices.cents(for: item.name, category: item.category) else { return nil }
+        return ItemPrice(cents: est, isEstimate: true)
+    }
+
+    /// Price for a recipe ingredient that is not on the list yet — the recipe screen and the
+    /// onboarding cost step both need a number before anything has been added.
+    func price(for ingredient: Ingredient) -> ItemPrice? {
+        if let onList = shopping.first(where: { $0.name.lowercased() == ingredient.name.lowercased() }) {
+            // Already marked as owned: it costs nothing to buy. Without this the recipe and
+            // week totals would keep charging for an ingredient the list has struck through,
+            // and the two screens would quote different prices for the same dish.
+            if onList.alreadyHave { return nil }
+            // Prefer a real price already cached on the matching list line.
+            if let real = onList.priceCents { return ItemPrice(cents: real, isEstimate: false) }
+        }
+        guard let est = IngredientPrices.cents(for: ingredient.name, category: ingredient.category) else { return nil }
+        return ItemPrice(cents: est, isEstimate: true)
+    }
+
+    /// Total for a set of items. Items the user says they already own are left out — that
+    /// exclusion is the whole point of the "already have it?" prompt.
+    /// `isEstimate` is true when *any* line fell back to the offline table, because a total
+    /// that mixes real and estimated prices is still an estimate.
+    func priceTotal(_ items: [ShoppingItem]) -> ItemPrice? {
+        let prices = items.filter { !$0.alreadyHave }.compactMap { price(for: $0) }
+        guard !prices.isEmpty else { return nil }
+        return ItemPrice(cents: prices.reduce(0) { $0 + $1.cents },
+                         isEstimate: prices.contains { $0.isEstimate })
+    }
+
+    /// Total of known *store* prices only, in cents. Kept for the store-pricing surfaces that
+    /// must never show an estimate as if it came from the shelf.
     func priceTotalCents(_ items: [ShoppingItem]) -> Int? {
-        let known = items.compactMap(\.priceCents)
+        let known = items.filter { !$0.alreadyHave }.compactMap(\.priceCents)
         return known.isEmpty ? nil : known.reduce(0, +)
     }
+
+    /// Grand total across the whole list, real or estimated.
+    var cartTotal: ItemPrice? { priceTotal(shopping) }
 
     /// Grand total across the whole list, in cents. nil until at least one item is priced.
     var cartTotalCents: Int? { priceTotalCents(shopping) }
 
     /// How many items on the list have a known price, for "12 of 15 priced".
     var pricedItemCount: Int { shopping.filter { $0.priceCents != nil }.count }
+
+    // MARK: Recipe & week cost
+
+    /// What one recipe's full ingredient list costs to buy.
+    func recipeCost(_ recipe: Recipe) -> ItemPrice? {
+        let prices = recipe.ingredients.compactMap { price(for: $0) }
+        guard !prices.isEmpty else { return nil }
+        return ItemPrice(cents: prices.reduce(0) { $0 + $1.cents },
+                         isEstimate: prices.contains { $0.isEstimate })
+    }
+
+    /// Cost per serving, using the recipe's own serving count (never zero).
+    func costPerServing(_ recipe: Recipe) -> ItemPrice? {
+        guard let total = recipeCost(recipe) else { return nil }
+        let servings = max(1, recipe.servings)
+        return ItemPrice(cents: total.cents / servings, isEstimate: total.isEstimate)
+    }
+
+    /// What the whole planned week costs to shop for.
+    ///
+    /// Shared ingredients are counted **once** — buying one bulb of garlic covers four
+    /// dinners. That is both the honest number and the thing the app is claiming to do for
+    /// the user, so summing the per-recipe totals here would be wrong twice over.
+    func weekCost(for recipes: [Recipe]) -> ItemPrice? {
+        var seen = Set<String>()
+        var prices: [ItemPrice] = []
+        for recipe in recipes {
+            for ingredient in recipe.ingredients {
+                let key = ingredient.name.lowercased().trimmingCharacters(in: .whitespaces)
+                guard !key.isEmpty, seen.insert(key).inserted else { continue }
+                if let p = price(for: ingredient) { prices.append(p) }
+            }
+        }
+        guard !prices.isEmpty else { return nil }
+        return ItemPrice(cents: prices.reduce(0) { $0 + $1.cents },
+                         isEstimate: prices.contains { $0.isEstimate })
+    }
+
+    /// How many ingredients appear in more than one of these recipes — the "I reused 8
+    /// ingredients across your week" line.
+    func sharedIngredientCount(for recipes: [Recipe]) -> Int {
+        var counts: [String: Int] = [:]
+        for recipe in recipes {
+            // Within one recipe an ingredient counts once, however it is listed.
+            for key in Set(recipe.ingredients.map { $0.name.lowercased().trimmingCharacters(in: .whitespaces) }) {
+                guard !key.isEmpty else { continue }
+                counts[key, default: 0] += 1
+            }
+        }
+        return counts.values.filter { $0 > 1 }.count
+    }
+
+    /// The recipes currently assigned to days, in day order.
+    var plannedRecipes: [Recipe] {
+        Self.days.compactMap { plan[$0] }.compactMap { id in recipes.first { $0.id == id } }
+    }
+
+    /// Marks a list item as something the user already owns, so it drops out of the totals.
+    func toggleAlreadyHave(_ id: String) {
+        guard let i = shopping.firstIndex(where: { $0.id == id }) else { return }
+        Haptics.tap(.light)
+        withAnimation(Self.stepAnimation) { shopping[i].alreadyHave.toggle() }
+        persist()
+    }
 
     // MARK: - Discover
 

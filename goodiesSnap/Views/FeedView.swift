@@ -5,16 +5,17 @@ struct FeedView: View {
     @EnvironmentObject var store: AppStore
     @EnvironmentObject var social: SocialStore
 
+    @State private var showChannels = false
+
     var body: some View {
         Group {
             if social.signedIn {
-                feed
+                serverView
             } else {
                 AuthView()
             }
         }
         .onAppear {
-            // UI-automation hook: `-gsFeedFilter mine|<groupSlug>` preselects a filter.
             if let preset = UserDefaults.standard.string(forKey: "gsFeedFilter") {
                 social.pendingFilterSlug = preset
             }
@@ -24,268 +25,428 @@ struct FeedView: View {
         }
     }
 
-    private var feed: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .center) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Community")
-                            .font(nunito(29, .black))
-                        Text("What everyone's cooking")
-                            .font(nunito(13, .semibold))
-                            .foregroundStyle(Color.gsMuted)
-                    }
-                    Spacer()
-                    Menu {
-                        Button("Sign out", role: .destructive) { social.signOut() }
-                    } label: {
-                        Text(String(social.session?.displayName.prefix(1) ?? "?").uppercased())
-                            .font(nunito(15, .extrabold))
-                            .foregroundStyle(Color.gsFg)
-                            .frame(width: 44, height: 44)
-                            .background(Color.gsPeachSoft)
-                            .clipShape(Circle())
-                    }
-                }
+    // MARK: - Discord-style server layout
 
-                ComposerBar()
-                    .padding(.top, 16)
-
-                GroupsStrip()
-                    .padding(.top, 22)
-
-                FeedFilterTabs()
-                    .padding(.top, 20)
-
-                if social.loading {
-                    // Skeletons rather than a bare spinner: the shape of what's coming
-                    // makes the wait feel shorter and stops the layout jumping.
-                    VStack(spacing: 12) {
-                        ForEach(0..<3, id: \.self) { _ in SkeletonPostCard() }
-                    }
-                    .padding(.top, 14)
-                } else if social.visiblePosts.isEmpty {
-                    VStack(spacing: 6) {
-                        Text(social.feedFilter == nil ? "Nothing here yet" : "No posts here yet")
-                            .font(nunito(19, .extrabold))
-                            .foregroundStyle(Color.fg(0.7))
-                        Text(social.feedFilter == "mine"
-                             ? "Join a group above to see its posts."
-                             : "Be the first — say hi, ask a question, or share a dish.")
-                            .font(nunito(12.5, .semibold))
-                            .foregroundStyle(Color.gsMuted)
-                            .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 48)
-                }
-
-                VStack(spacing: 18) {
-                    ForEach(social.visiblePosts) { post in
-                        FeedPostCard(post: post)
-                            .transition(.opacity.combined(with: .scale(scale: 0.97)))
-                    }
-                }
-                .padding(.top, 16)
-                .animation(AppStore.lateralAnimation, value: social.visiblePosts)
+    private var serverView: some View {
+        ZStack(alignment: .leading) {
+            VStack(spacing: 0) {
+                channelHeader
+                Divider().overlay(Color.fg(0.08))
+                chatArea
+                messageBar
             }
-            .padding(.horizontal, 22)
-            .padding(.top, 8)
-            .padding(.bottom, 116)
+            .background(Color.gsBg)
+
+            if showChannels {
+                Color.black.opacity(0.35)
+                    .ignoresSafeArea()
+                    .onTapGesture { withAnimation(.easeOut(duration: 0.2)) { showChannels = false } }
+
+                channelSidebar
+                    .transition(.move(edge: .leading))
+            }
         }
-        .background(Color.gsBg)
-        .refreshable { await social.refresh() }
+        .animation(.easeOut(duration: 0.25), value: showChannels)
     }
-}
 
-// MARK: - Composer bar ("What's cooking?")
+    // MARK: - Channel header
 
-struct ComposerBar: View {
-    @EnvironmentObject var social: SocialStore
-
-    var body: some View {
-        VStack(spacing: 12) {
+    private var channelHeader: some View {
+        HStack(spacing: 12) {
             Button {
-                open(groupPreset: (social.feedFilter == "mine") ? nil : social.feedFilter)
+                withAnimation(.easeOut(duration: 0.2)) { showChannels.toggle() }
             } label: {
-                HStack(spacing: 12) {
-                    Text(String(social.session?.displayName.prefix(1) ?? "?").uppercased())
-                        .font(nunito(14, .extrabold))
-                        .frame(width: 38, height: 38)
-                        .background(Color.gsPeachSoft)
-                        .clipShape(Circle())
-                    Text("What's cooking, \(social.session?.displayName.split(separator: " ").first.map(String.init) ?? "chef")?")
-                        .font(nunito(14, .semibold))
-                        .foregroundStyle(Color.gsMuted)
-                    Spacer()
-                }
-                .padding(.horizontal, 12)
-                .frame(minHeight: 54)
-                .background(Color.gsFill)
-                .clipShape(Capsule())
-            }
-            .buttonStyle(PressableStyle(scale: 0.985))
-
-            HStack(spacing: 8) {
-                composerAction("photo.fill", "Photo") { open(groupPreset: nil) }
-                composerAction("questionmark.bubble.fill", "Ask") { open(groupPreset: nil, question: true) }
-                composerAction("book.closed.fill", "Recipe") { open(groupPreset: nil) }
-            }
-        }
-        .padding(14)
-        .softCard(radius: 24)
-    }
-
-    private func open(groupPreset: String?, question: Bool = false) {
-        social.composeGroupID = groupPreset
-        social.composeAsQuestion = question
-        withAnimation(AppStore.sheetAnimation) { social.composing = true }
-    }
-
-    private func composerAction(_ system: String, _ label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: system)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.gsAccentInk)
-                Text(label)
-                    .font(nunito(13, .extrabold))
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(Color.gsFg)
-            }
-            .frame(maxWidth: .infinity, minHeight: 40)
-            .background(Color.gsCard)
-            .clipShape(Capsule())
-            .overlay(Capsule().strokeBorder(Color.gsFill, lineWidth: 1.5))
-        }
-        .buttonStyle(PressableStyle(scale: 0.95))
-    }
-}
-
-// MARK: - Groups strip
-
-struct GroupsStrip: View {
-    @EnvironmentObject var social: SocialStore
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Groups")
-                    .font(nunito(19, .extrabold))
-                Text("\(social.myGroupIDs.count)")
-                    .font(nunito(10, .black))
-                    .foregroundStyle(Color.gsFg)
-                    .frame(width: 22, height: 22)
-                    .background(Color.gsPeach)
+                    .frame(width: 38, height: 38)
+                    .background(Color.fg(0.06))
                     .clipShape(Circle())
-                Spacer()
-                Text("joined")
-                    .font(nunito(12.5, .bold))
-                    .foregroundStyle(Color.gsMuted)
             }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    ForEach(social.groups) { group in
-                        GroupTile(group: group)
+            .buttonStyle(.plain)
+
+            if let groupID = social.feedFilter, groupID != "mine",
+               let group = social.group(id: groupID) {
+                Text(group.emoji)
+                    .font(.system(size: 18))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(group.name)
+                        .font(nunito(16, .extrabold))
+                        .lineLimit(1)
+                    Text("\(group.member_count) members")
+                        .font(nunito(11, .semibold))
+                        .foregroundStyle(Color.gsMuted)
+                }
+            } else {
+                Image(systemName: "number")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Color.gsMuted)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(social.feedFilter == "mine" ? "My Groups" : "General")
+                        .font(nunito(16, .extrabold))
+                        .lineLimit(1)
+                    Text("What everyone's cooking")
+                        .font(nunito(11, .semibold))
+                        .foregroundStyle(Color.gsMuted)
+                }
+            }
+
+            Spacer()
+
+            Menu {
+                Button("Sign out", role: .destructive) { social.signOut() }
+            } label: {
+                Text(String(social.session?.displayName.prefix(1) ?? "?").uppercased())
+                    .font(nunito(14, .extrabold))
+                    .foregroundStyle(Color.gsFg)
+                    .frame(width: 36, height: 36)
+                    .background(Color.gsPeachSoft)
+                    .clipShape(Circle())
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 56)
+        .background(Color.gsBg)
+    }
+
+    // MARK: - Channel sidebar
+
+    private var channelSidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Server header
+            HStack(spacing: 10) {
+                Text("🍳")
+                    .font(.system(size: 22))
+                    .frame(width: 40, height: 40)
+                    .background(Color.gsPeach)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                Text("goodiesSnap")
+                    .font(nunito(18, .black))
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(Color.fg(0.08)).frame(height: 1)
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    // General channels
+                    Text("CHANNELS")
+                        .font(nunito(11, .extrabold))
+                        .foregroundStyle(Color.gsMuted)
+                        .kerning(0.8)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 16)
+                        .padding(.bottom, 4)
+
+                    channelRow(emoji: "#", name: "General", id: nil)
+                    channelRow(emoji: "📌", name: "My Groups", id: "mine")
+
+                    // Group channels
+                    if !social.groups.isEmpty {
+                        Text("GROUPS")
+                            .font(nunito(11, .extrabold))
+                            .foregroundStyle(Color.gsMuted)
+                            .kerning(0.8)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 20)
+                            .padding(.bottom, 4)
+
+                        ForEach(social.groups) { group in
+                            groupChannelRow(group)
+                        }
                     }
                 }
-                .padding(.horizontal, 2)
-                .padding(.vertical, 4)
-            }
-            .padding(.horizontal, -2)
-        }
-    }
-}
-
-struct GroupTile: View {
-    @EnvironmentObject var social: SocialStore
-    let group: CommunityGroup
-
-    private var joined: Bool { social.myGroupIDs.contains(group.id) }
-    private var selected: Bool { social.feedFilter == group.id }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(group.emoji)
-                    .font(.system(size: 26))
-                Spacer()
-                Button { social.toggleMembership(group) } label: {
-                    Text(joined ? "Joined" : "Join")
-                        .font(nunito(11.5, .extrabold))
-                        .foregroundStyle(Color.gsDock)
-                        .padding(.horizontal, 12)
-                        .frame(minHeight: 28)
-                        .background(joined ? Color.gsFill : Color.gsPeach)
-                        .clipShape(Capsule())
-                }
-                .buttonStyle(PressableStyle(scale: 0.92))
-            }
-            Text(group.name)
-                .font(nunito(14, .extrabold))
-                .lineLimit(1)
-            Text("\(group.member_count) members · \(group.post_count) posts")
-                .font(nunito(11, .semibold))
-                .foregroundStyle(Color.gsMuted)
-                .lineLimit(1)
-        }
-        .padding(14)
-        .frame(width: 176, alignment: .leading)
-        .background(selected ? Color.gsPeachSoft : Color.gsCard)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(selected ? Color.gsPeach : Color.clear, lineWidth: 2))
-        .shadow(color: Color.black.opacity(0.05), radius: 12, x: 0, y: 6)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            Haptics.tap(.light)
-            withAnimation(AppStore.lateralAnimation) {
-                social.feedFilter = selected ? nil : group.id
+                .padding(.bottom, 20)
             }
         }
-    }
-}
-
-// MARK: - Filter tabs
-
-struct FeedFilterTabs: View {
-    @EnvironmentObject var social: SocialStore
-
-    var body: some View {
-        HStack(spacing: 8) {
-            tab("For you", value: nil)
-            tab("My groups", value: "mine")
-            if let id = social.feedFilter, id != "mine", let g = social.group(id: id) {
-                tab("\(g.emoji) \(g.name)", value: id)
-            }
-            Spacer()
-        }
+        .frame(width: 280)
+        .background(Color.gsCard)
+        .clipShape(RoundedRectangle(cornerRadius: 0))
+        .shadow(color: .black.opacity(0.15), radius: 20, x: 4)
     }
 
-    private func tab(_ label: String, value: String?) -> some View {
-        let active = social.feedFilter == value
+    private func channelRow(emoji: String, name: String, id: String?) -> some View {
+        let active = social.feedFilter == id
         return Button {
             Haptics.tap(.light)
-            withAnimation(AppStore.lateralAnimation) { social.feedFilter = value }
+            withAnimation(AppStore.lateralAnimation) {
+                social.feedFilter = id
+                showChannels = false
+            }
         } label: {
-            Text(label)
-                .font(nunito(13, .extrabold))
-                .foregroundStyle(active ? Color.white : Color.gsFg)
-                .lineLimit(1)
-                .padding(.horizontal, 16)
-                .frame(minHeight: 38)
-                .background(active ? Color.gsDock : Color.gsCard)
-                .clipShape(Capsule())
-                .shadow(color: Color.black.opacity(active ? 0 : 0.05), radius: 10, x: 0, y: 5)
+            HStack(spacing: 10) {
+                Text(emoji)
+                    .font(nunito(15, .bold))
+                    .foregroundStyle(active ? Color.gsFg : Color.gsMuted)
+                    .frame(width: 24)
+                Text(name)
+                    .font(nunito(14, active ? .extrabold : .semibold))
+                    .foregroundStyle(active ? Color.gsFg : Color.fg(0.6))
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .frame(minHeight: 38)
+            .background(active ? Color.fg(0.08) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(.horizontal, 8)
         }
-        .buttonStyle(PressableStyle(scale: 0.95))
+        .buttonStyle(.plain)
+    }
+
+    private func groupChannelRow(_ group: CommunityGroup) -> some View {
+        let active = social.feedFilter == group.id
+        let joined = social.myGroupIDs.contains(group.id)
+        return Button {
+            Haptics.tap(.light)
+            withAnimation(AppStore.lateralAnimation) {
+                social.feedFilter = active ? nil : group.id
+                showChannels = false
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Text(group.emoji)
+                    .font(.system(size: 16))
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(group.name)
+                        .font(nunito(14, active ? .extrabold : .semibold))
+                        .foregroundStyle(active ? Color.gsFg : Color.fg(0.6))
+                        .lineLimit(1)
+                    Text("\(group.member_count) members")
+                        .font(nunito(10, .semibold))
+                        .foregroundStyle(Color.gsMuted)
+                }
+                Spacer()
+                if !joined {
+                    Button {
+                        social.toggleMembership(group)
+                    } label: {
+                        Text("Join")
+                            .font(nunito(11, .extrabold))
+                            .foregroundStyle(Color.gsDock)
+                            .padding(.horizontal, 10)
+                            .frame(height: 26)
+                            .background(Color.gsPeach)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(PressableStyle(scale: 0.92))
+                }
+            }
+            .padding(.horizontal, 16)
+            .frame(minHeight: 42)
+            .background(active ? Color.fg(0.08) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(.horizontal, 8)
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Chat area (messages)
+
+    private var chatArea: some View {
+        ScrollView {
+            if social.loading {
+                VStack(spacing: 8) {
+                    ForEach(0..<4, id: \.self) { _ in SkeletonMessage() }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+            } else if social.visiblePosts.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .font(.system(size: 36, weight: .light))
+                        .foregroundStyle(Color.fg(0.2))
+                    Text(social.feedFilter == nil ? "No messages yet" : "No messages in this channel")
+                        .font(nunito(16, .extrabold))
+                        .foregroundStyle(Color.fg(0.5))
+                    Text("Be the first to say something!")
+                        .font(nunito(13, .semibold))
+                        .foregroundStyle(Color.gsMuted)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 60)
+            } else {
+                LazyVStack(spacing: 0) {
+                    ForEach(social.visiblePosts) { post in
+                        MessageRow(post: post)
+                    }
+                }
+                .padding(.top, 8)
+                .padding(.bottom, 12)
+            }
+        }
+        .refreshable { await social.refresh() }
+    }
+
+    // MARK: - Message input bar
+
+    @State private var messageText = ""
+    @State private var pickedPhoto: PhotosPickerItem?
+    @State private var attachedImage: UIImage?
+    @State private var attachedRecipe: Recipe?
+    @State private var pickingRecipe = false
+
+    private var canSend: Bool {
+        !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || attachedImage != nil || attachedRecipe != nil
+    }
+
+    private var messageBar: some View {
+        VStack(spacing: 0) {
+            Divider().overlay(Color.fg(0.08))
+
+            if let img = attachedImage {
+                HStack {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 60, height: 60)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    Spacer()
+                    Button { withAnimation { attachedImage = nil } } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 20))
+                            .foregroundStyle(Color.fg(0.4))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+            }
+
+            if let recipe = attachedRecipe {
+                HStack(spacing: 10) {
+                    CoverImage(url: recipe.imageURL)
+                        .frame(width: 40, height: 40)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    Text(recipe.title)
+                        .font(nunito(13, .bold))
+                        .lineLimit(1)
+                    Spacer()
+                    Button { withAnimation { attachedRecipe = nil } } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 20))
+                            .foregroundStyle(Color.fg(0.4))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+            }
+
+            if pickingRecipe {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(store.recipes.prefix(8)) { r in
+                            Button {
+                                withAnimation { attachedRecipe = r; pickingRecipe = false }
+                            } label: {
+                                HStack(spacing: 10) {
+                                    CoverImage(url: r.imageURL)
+                                        .frame(width: 34, height: 34)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                    Text(r.title).font(nunito(13, .bold)).lineLimit(1)
+                                    Spacer()
+                                }
+                                .frame(minHeight: 42)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+                .frame(maxHeight: 200)
+                .background(Color.fg(0.03))
+            }
+
+            HStack(spacing: 8) {
+                HStack(spacing: 4) {
+                    PhotosPicker(selection: $pickedPhoto, matching: .images) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 22, weight: .medium))
+                            .foregroundStyle(Color.fg(0.35))
+                    }
+
+                    TextField("Message #\(channelName)", text: $messageText, axis: .vertical)
+                        .font(nunito(14, .semibold))
+                        .lineLimit(1...4)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.fg(0.05))
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .strokeBorder(Color.fg(0.1), lineWidth: 1)
+                )
+
+                HStack(spacing: 4) {
+                    Button { withAnimation { pickingRecipe.toggle() } } label: {
+                        Image(systemName: "book.closed.fill")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(pickingRecipe ? Color.gsPeach : Color.fg(0.35))
+                            .frame(width: 34, height: 34)
+                    }
+                    .buttonStyle(.plain)
+
+                    Button { sendPost() } label: {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 30, weight: .medium))
+                            .foregroundStyle(canSend ? Color.gsPeach : Color.fg(0.15))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSend || social.busy)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+        .background(Color.gsBg)
+        .onChange(of: pickedPhoto) { _, item in
+            guard let item else { return }
+            Task {
+                let data = try? await item.loadTransferable(type: Data.self)
+                pickedPhoto = nil
+                if let data, let img = UIImage(data: data) {
+                    withAnimation { attachedImage = img }
+                }
+            }
+        }
+    }
+
+    private var channelName: String {
+        if let id = social.feedFilter, id != "mine", let g = social.group(id: id) {
+            return g.name.lowercased().replacingOccurrences(of: " ", with: "-")
+        }
+        return social.feedFilter == "mine" ? "my-groups" : "general"
+    }
+
+    private func sendPost() {
+        let text = messageText
+        messageText = ""
+        let img = attachedImage
+        let recipe = attachedRecipe
+        attachedImage = nil
+        attachedRecipe = nil
+        pickingRecipe = false
+        Task {
+            if await social.publish(text: text, image: img, recipe: recipe,
+                                     groupID: social.composeGroupID ?? social.feedFilter,
+                                     asQuestion: false) {
+                store.showToast("Sent")
+            }
+        }
     }
 }
 
-// MARK: - Post card
+// MARK: - Message row (Discord-style)
 
-struct FeedPostCard: View {
+struct MessageRow: View {
     @EnvironmentObject var store: AppStore
     @EnvironmentObject var social: SocialStore
-
     let post: FeedPost
 
     private var liked: Bool { social.likedPostIDs.contains(post.id) }
@@ -293,196 +454,268 @@ struct FeedPostCard: View {
     private var group: CommunityGroup? { social.group(id: post.group_id) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Text(String(post.author_name.prefix(1)).uppercased())
-                    .font(nunito(14, .extrabold))
-                    .frame(width: 38, height: 38)
-                    .background(Color.gsPeachSoft)
-                    .clipShape(Circle())
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 4) {
-                        Text(post.author_name)
-                            .font(nunito(14, .extrabold))
-                        if let group {
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(Color.gsMuted)
-                            Text("\(group.emoji) \(group.name)")
-                                .font(nunito(13, .bold))
-                                .lineLimit(1)
-                        }
-                    }
-                    HStack(spacing: 4) {
-                        Text(post.relativeTime)
-                        if post.isQuestion {
-                            Text("· asked a question")
-                        } else if post.kind == "recipe" {
-                            Text("· shared a recipe")
-                        }
-                    }
-                    .font(nunito(11, .semibold))
-                    .foregroundStyle(Color.gsMuted)
-                }
-                Spacer()
-                // Every post carries this menu, not just your own: reporting and
-                // blocking have to be reachable from the content itself.
-                Menu {
-                    if mine {
-                        Button("Delete post", role: .destructive) { social.deletePost(post) }
-                    } else {
-                        Button {
-                            social.startReport(.post(post))
-                        } label: {
-                            Label("Report post", systemImage: "flag")
-                        }
-                        Button(role: .destructive) {
-                            social.block(userID: post.author_id)
-                        } label: {
-                            Label("Block \(post.author_name)", systemImage: "hand.raised")
-                        }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.gsMuted)
-                        .frame(width: 34, height: 34)
-                        .contentShape(Rectangle())
-                }
-                .accessibilityLabel(mine ? "Post options" : "Report or block")
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 14)
-
-            if !post.caption.isEmpty {
-                HStack(alignment: .top, spacing: 8) {
-                    if post.isQuestion {
-                        Image(systemName: "questionmark.circle.fill")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(Color.gsAccentInk)
-                            .padding(.top, 2)
-                    }
-                    Text(post.caption)
-                        .font(nunito(post.isQuestion ? 16 : 14.5, post.isQuestion ? .extrabold : .semibold))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.horizontal, 14)
-                .padding(.top, 12)
-            }
-
-            if let recipe = post.recipe {
-                Button { store.open(recipe) } label: {
-                    RecipeAttachment(recipe: recipe)
-                }
-                .buttonStyle(PressableStyle(scale: 0.985))
-                .padding(.horizontal, 10)
-                .padding(.top, 12)
-            } else if post.image_url != nil, let url = post.imageURL {
-                CoverImage(url: url)
-                    .frame(height: 240)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .padding(.horizontal, 10)
-                    .padding(.top, 12)
-            }
-
-            HStack(spacing: 18) {
-                Button { social.toggleLike(post) } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: liked ? "heart.fill" : "heart")
-                            .font(.system(size: 16, weight: .medium))
-                        Text("\(post.like_count)")
-                            .font(nunito(13, .extrabold))
-                    }
-                    .foregroundStyle(liked ? Color.gsPeach : Color.gsMuted)
-                }
-                .buttonStyle(.plain)
-
-                Button { social.openComments(post) } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "bubble.right")
-                            .font(.system(size: 15, weight: .medium))
-                        Text(post.isQuestion ? "\(post.comment_count) answers" : "\(post.comment_count)")
-                            .font(nunito(13, .extrabold))
-                    }
-                    .foregroundStyle(Color.gsMuted)
-                }
-                .buttonStyle(.plain)
-
-                Spacer()
-
-                if post.isQuestion {
-                    Button { social.openComments(post) } label: {
-                        Text("Answer")
-                            .font(nunito(12.5, .extrabold))
-                            .foregroundStyle(Color.gsDock)
-                            .padding(.horizontal, 16)
-                            .frame(minHeight: 36)
-                    }
-                    .buttonStyle(PeachButtonStyle())
-                } else if let recipe = post.recipe {
-                    Button {
-                        var copy = recipe
-                        copy.id = "r\(Int(Date().timeIntervalSince1970 * 1000))"
-                        copy.favorite = false
-                        copy.source = "Community · \(post.author_name)"
-                        withAnimation(AppStore.pushAnimation) { store.recipes.insert(copy, at: 0) }
-                        store.persist()
-                        store.showToast("Saved to your library")
-                    } label: {
-                        Text("Save recipe")
-                            .font(nunito(12.5, .extrabold))
-                            .foregroundStyle(Color.gsDock)
-                            .padding(.horizontal, 16)
-                            .frame(minHeight: 36)
-                    }
-                    .buttonStyle(PeachButtonStyle())
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-        }
-        .softCard(radius: 24)
+        if post.isDeleted { deletedRow } else { messageRow }
     }
-}
 
-/// Recipe preview embedded in a post.
-struct RecipeAttachment: View {
-    let recipe: Recipe
+    private var deletedRow: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(String(post.author_name.prefix(1)).uppercased())
+                .font(nunito(14, .extrabold))
+                .foregroundStyle(Color.gsFg)
+                .frame(width: 40, height: 40)
+                .background(authorColor.opacity(0.5))
+                .clipShape(Circle())
 
-    var body: some View {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(post.author_name)
+                        .font(nunito(14, .extrabold))
+                        .foregroundStyle(Color.gsMuted)
+                    Text(post.relativeTime)
+                        .font(nunito(11, .semibold))
+                        .foregroundStyle(Color.gsMuted)
+                    Spacer()
+                    if mine {
+                        Menu {
+                            Button("Remove", role: .destructive) { social.deletePost(post) }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Color.fg(0.25))
+                                .frame(width: 28, height: 28)
+                                .contentShape(Rectangle())
+                        }
+                        .accessibilityLabel("Deleted message options")
+                    }
+                }
+                HStack(spacing: 6) {
+                    Image(systemName: "nosign")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(mine ? "You deleted this message" : "This message was deleted")
+                        .font(nunito(14, .semibold))
+                        .italic()
+                }
+                .foregroundStyle(Color.gsMuted)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(Color.gsBg)
+    }
+
+    private var messageRow: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(String(post.author_name.prefix(1)).uppercased())
+                .font(nunito(14, .extrabold))
+                .foregroundStyle(Color.gsFg)
+                .frame(width: 40, height: 40)
+                .background(authorColor)
+                .clipShape(Circle())
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(post.author_name)
+                        .font(nunito(14, .extrabold))
+                        .foregroundStyle(nameColor)
+                    Text(post.relativeTime)
+                        .font(nunito(11, .semibold))
+                        .foregroundStyle(Color.gsMuted)
+                    Spacer()
+                    Menu {
+                        if mine {
+                            Button("Delete", role: .destructive) { social.deletePost(post) }
+                        } else {
+                            Button { social.startReport(.post(post)) } label: {
+                                Label("Report", systemImage: "flag")
+                            }
+                            Button(role: .destructive) {
+                                social.block(userID: post.author_id)
+                            } label: {
+                                Label("Block", systemImage: "hand.raised")
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.fg(0.25))
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel(mine ? "Post options" : "Report or block")
+                }
+
+                if !post.caption.isEmpty {
+                    if post.isQuestion {
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: "questionmark.circle.fill")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Color.gsAccentInk)
+                                .padding(.top, 1)
+                            Text(post.caption)
+                                .font(nunito(14, .extrabold))
+                        }
+                    } else {
+                        Text(post.caption)
+                            .font(nunito(14, .semibold))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                if let recipe = post.recipe {
+                    Button { store.open(recipe) } label: {
+                        recipeEmbed(recipe)
+                    }
+                    .buttonStyle(PressableStyle(scale: 0.985))
+                    .padding(.top, 4)
+                } else if post.image_url != nil, let url = post.imageURL {
+                    CoverImage(url: url)
+                        .frame(maxWidth: 320, maxHeight: 220)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .padding(.top, 4)
+                }
+
+                // Reactions bar
+                HStack(spacing: 4) {
+                    Button { social.toggleLike(post) } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: liked ? "heart.fill" : "heart")
+                                .font(.system(size: 12, weight: .semibold))
+                            if post.like_count > 0 {
+                                Text("\(post.like_count)")
+                                    .font(nunito(11.5, .extrabold))
+                            }
+                        }
+                        .foregroundStyle(liked ? Color.gsPeach : Color.fg(0.4))
+                        .padding(.horizontal, 8)
+                        .frame(height: 28)
+                        .background(liked ? Color.gsPeach.opacity(0.12) : Color.fg(0.05))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button { social.openComments(post) } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "bubble.left")
+                                .font(.system(size: 12, weight: .semibold))
+                            if post.comment_count > 0 {
+                                Text("\(post.comment_count)")
+                                    .font(nunito(11.5, .extrabold))
+                            }
+                        }
+                        .foregroundStyle(Color.fg(0.4))
+                        .padding(.horizontal, 8)
+                        .frame(height: 28)
+                        .background(Color.fg(0.05))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    if let recipe = post.recipe, !mine {
+                        Button {
+                            var copy = recipe
+                            copy.id = "r\(Int(Date().timeIntervalSince1970 * 1000))"
+                            copy.favorite = false
+                            copy.source = "Community · \(post.author_name)"
+                            withAnimation(AppStore.pushAnimation) { store.recipes.insert(copy, at: 0) }
+                            store.persist()
+                            store.showToast("Saved to your library")
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "bookmark")
+                                    .font(.system(size: 12, weight: .semibold))
+                                Text("Save")
+                                    .font(nunito(11.5, .extrabold))
+                            }
+                            .foregroundStyle(Color.fg(0.4))
+                            .padding(.horizontal, 8)
+                            .frame(height: 28)
+                            .background(Color.fg(0.05))
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.top, 2)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(Color.gsBg)
+    }
+
+    private func recipeEmbed(_ recipe: Recipe) -> some View {
         HStack(spacing: 12) {
             CoverImage(url: recipe.imageURL)
-                .frame(width: 92, height: 92)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            VStack(alignment: .leading, spacing: 4) {
+                .frame(width: 72, height: 72)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            VStack(alignment: .leading, spacing: 3) {
                 Text(recipe.cuisine.uppercased())
-                    .font(nunito(10, .extrabold))
-                    .tracking(1.2)
+                    .font(nunito(9.5, .extrabold))
+                    .tracking(1)
                     .foregroundStyle(Color.gsMuted)
                 Text(recipe.title)
-                    .font(nunito(15.5, .extrabold))
+                    .font(nunito(14, .extrabold))
                     .foregroundStyle(Color.gsFg)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     Label("\(recipe.totalMinutes) min", systemImage: "clock.fill")
                     Label("Serves \(recipe.servings)", systemImage: "person.2.fill")
                 }
-                .font(nunito(11.5, .semibold))
+                .font(nunito(11, .semibold))
                 .foregroundStyle(Color.gsMuted)
             }
             Spacer(minLength: 0)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Color.gsMuted)
         }
         .padding(10)
-        .background(Color.gsFill)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .frame(maxWidth: 340)
+        .background(Color.fg(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.fg(0.08), lineWidth: 1)
+        )
+    }
+
+    private var authorColor: Color {
+        let colors: [Color] = [.gsPeachSoft, Color(hex: 0xD4E8D0), Color(hex: 0xD0DCE8), Color(hex: 0xE8D0E4), Color(hex: 0xE8E0D0)]
+        let hash = abs(post.author_id.hashValue)
+        return colors[hash % colors.count]
+    }
+
+    private var nameColor: Color {
+        let colors: [Color] = [Color(hex: 0xC06B00), Color(hex: 0x2D8C3C), Color(hex: 0x3B6BA5), Color(hex: 0x8B3BAB), Color(hex: 0xA57B3B)]
+        let hash = abs(post.author_id.hashValue)
+        return colors[hash % colors.count]
     }
 }
 
-// MARK: - Composer sheet
+// MARK: - Skeleton message
+
+private struct SkeletonMessage: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Circle()
+                .fill(Color.fg(0.08))
+                .frame(width: 40, height: 40)
+            VStack(alignment: .leading, spacing: 6) {
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(Color.fg(0.1))
+                    .frame(width: 120, height: 14)
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(Color.fg(0.06))
+                    .frame(height: 14)
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(Color.fg(0.06))
+                    .frame(width: 200, height: 14)
+            }
+            Spacer()
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+// MARK: - Composer sheet (kept for share-from-recipe flow)
 
 struct ComposerSheet: View {
     @EnvironmentObject var store: AppStore
@@ -639,7 +872,7 @@ struct ComposerSheet: View {
                         if social.busy { ProgressView().tint(Color.white) }
                         else { Text("Post").font(nunito(15, .extrabold)) }
                     }
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(Color.gsFg)
                     .frame(maxWidth: .infinity, minHeight: 54)
                 }
                 .buttonStyle(DarkButtonStyle())
@@ -696,6 +929,44 @@ struct ComposerSheet: View {
     }
 }
 
+// MARK: - Recipe attachment (shared)
+
+struct RecipeAttachment: View {
+    let recipe: Recipe
+
+    var body: some View {
+        HStack(spacing: 12) {
+            CoverImage(url: recipe.imageURL)
+                .frame(width: 92, height: 92)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(recipe.cuisine.uppercased())
+                    .font(nunito(10, .extrabold))
+                    .tracking(1.2)
+                    .foregroundStyle(Color.gsMuted)
+                Text(recipe.title)
+                    .font(nunito(15.5, .extrabold))
+                    .foregroundStyle(Color.gsFg)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                HStack(spacing: 8) {
+                    Label("\(recipe.totalMinutes) min", systemImage: "clock.fill")
+                    Label("Serves \(recipe.servings)", systemImage: "person.2.fill")
+                }
+                .font(nunito(11.5, .semibold))
+                .foregroundStyle(Color.gsMuted)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.gsMuted)
+        }
+        .padding(10)
+        .background(Color.gsFill)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+}
+
 // MARK: - Comments (discussion) sheet
 
 struct CommentsSheet: View {
@@ -730,12 +1001,12 @@ struct CommentsSheet: View {
                     .overlay(alignment: .bottom) { Rectangle().fill(Color.gsFill).frame(height: 1) }
                 }
 
-                Text(isQuestion ? "Answers" : "Discussion")
+                Text(isQuestion ? "Answers" : "Thread")
                     .font(nunito(15, .extrabold))
                     .padding(.top, 14)
 
                 if social.comments.isEmpty {
-                    Text(isQuestion ? "No answers yet — know this one?" : "No comments yet — start the discussion.")
+                    Text(isQuestion ? "No answers yet — know this one?" : "No replies yet — start the thread.")
                         .font(nunito(12.5, .semibold))
                         .foregroundStyle(Color.gsMuted)
                         .frame(maxWidth: .infinity)
@@ -766,7 +1037,7 @@ struct CommentsSheet: View {
                                 Button {
                                     social.startReport(.comment(comment, postID: post.id))
                                 } label: {
-                                    Label("Report comment", systemImage: "flag")
+                                    Label("Report", systemImage: "flag")
                                 }
                                 Button(role: .destructive) {
                                     social.block(userID: comment.author_id)
@@ -788,7 +1059,7 @@ struct CommentsSheet: View {
                 }
 
                 HStack(spacing: 10) {
-                    TextField("", text: $draft, prompt: Text(isQuestion ? "Write an answer…" : "Add a comment…").foregroundStyle(Color.gsMuted))
+                    TextField("", text: $draft, prompt: Text(isQuestion ? "Write an answer…" : "Reply…").foregroundStyle(Color.gsMuted))
                         .font(nunito(13.5, .semibold))
                         .padding(.horizontal, 16)
                         .frame(minHeight: 46)
@@ -816,7 +1087,7 @@ struct CommentsSheet: View {
     }
 }
 
-// MARK: - Share-to-feed sheet (from a recipe's detail screen)
+// MARK: - Share-to-feed sheet
 
 struct ShareSheet: View {
     @EnvironmentObject var social: SocialStore
@@ -850,7 +1121,7 @@ struct ShareSheet: View {
                             if social.busy { ProgressView().tint(Color.white) }
                             else { Text("Post").font(nunito(15, .extrabold)) }
                         }
-                        .foregroundStyle(Color.white)
+                        .foregroundStyle(Color.gsFg)
                         .frame(maxWidth: .infinity, minHeight: 54)
                     }
                     .buttonStyle(DarkButtonStyle())
@@ -864,8 +1135,6 @@ struct ShareSheet: View {
 
 // MARK: - Report sheet
 
-/// Reporting flow required by App Store guideline 1.2. Kept to one tap plus a reason so
-/// it actually gets used — a long form is a reason not to report at all.
 struct ReportSheet: View {
     @EnvironmentObject var social: SocialStore
 
@@ -887,7 +1156,7 @@ struct ReportSheet: View {
 
                 Text("Report content")
                     .font(nunito(20, .black))
-                Text("Tell us what's wrong with this \(targetNoun). Our team reviews reports within 24 hours and removes anything that breaks the rules.")
+                Text("Tell us what's wrong with this \(targetNoun). Our team reviews reports within 24 hours.")
                     .font(nunito(13, .semibold))
                     .foregroundStyle(Color.gsMuted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -944,17 +1213,13 @@ struct ReportSheet: View {
                     } label: {
                         Text(social.busy ? "Sending…" : "Submit report")
                             .font(nunito(14, .extrabold))
-                            // DarkButtonStyle paints the pill but not the label; every
-                            // caller sets its own foreground.
-                            .foregroundStyle(Color.white)
+                            .foregroundStyle(Color.gsFg)
                             .frame(maxWidth: .infinity, minHeight: 48)
                     }
                     .buttonStyle(DarkButtonStyle())
                     .disabled(social.busy)
                 }
 
-                // Blocking is offered right here: someone reporting harassment usually
-                // also wants the person gone, and shouldn't have to hunt for it.
                 if let target = social.reporting {
                     Button(role: .destructive) {
                         let author = target.authorID

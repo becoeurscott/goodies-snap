@@ -1,0 +1,1 @@
+recipe scanner,meal planner,food,recipes,cooking,shopping list,AI,meal prep,dinner

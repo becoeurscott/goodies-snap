@@ -76,9 +76,15 @@ struct ShoppingItem: Codable, Hashable, Identifiable {
     var priceStore: String? = nil
     /// Product image from the store lookup (Kroger), shown next to the item.
     var priceImage: String? = nil
+    /// The user says this one is already in their kitchen. Distinct from `done` (picked up
+    /// on this trip): an already-owned item stays on the list for reference but is left out
+    /// of every cost total, which is what makes the "you already had butter?" step move the
+    /// number. Optional with a default keeps older persisted lists decodable.
+    var alreadyHave: Bool = false
 }
 
 struct UserPreferences: Codable, Hashable {
+    // v1 fields (kept for backward compat with existing users)
     var goal: String = ""
     var diet: String = ""
     var avoid: [String] = []
@@ -86,11 +92,25 @@ struct UserPreferences: Codable, Hashable {
     var servings: Int = 2
     var skill: String = ""
 
+    // v2 onboarding fields
+    var motivations: [String] = []
+    var cuisines: [String] = []
+    var cookFrequency: String = ""
+    var householdSize: String = ""
+    var priorities: [String] = []
+    var preferredStore: String = ""
+    var mealPlanStyle: [String] = []
+
     var isComplete: Bool {
-        !goal.isEmpty && !diet.isEmpty && !skill.isEmpty
+        !motivations.isEmpty && !cuisines.isEmpty && !cookFrequency.isEmpty
     }
 
     var summary: String {
+        if !cuisines.isEmpty {
+            let top = cuisines.prefix(2).joined(separator: " & ")
+            let size = householdSize.isEmpty ? "serves \(servings)" : householdSize
+            return "\(top) · \(size)"
+        }
         let dietLabel = diet == "Anything" ? "flexible" : diet.lowercased()
         return "\(dietLabel) · \(maxMinutes) min · serves \(servings)"
     }
@@ -114,35 +134,79 @@ struct UserPreferences: Codable, Hashable {
         if recipe.totalMinutes <= maxMinutes { score += 18 }
         if abs(recipe.servings - servings) <= 1 { score += 8 }
 
-        switch goal {
-        case "Eat healthier":
-            if recipe.cal <= 550 { score += 12 }
-            if tags.contains("fresh") || tags.contains("low carb") { score += 10 }
-        case "Save time":
-            if recipe.totalMinutes <= 25 || tags.contains("quick") { score += 20 }
-        case "Meal prep":
-            if tags.contains("meal prep") || tags.contains("make ahead") { score += 20 }
-        case "Try new food":
-            if ["Thai", "Mexican", "Mediterranean"].contains(recipe.cuisine) { score += 12 }
-        default:
-            break
+        // Cuisine match from v2 onboarding
+        if !cuisines.isEmpty && !cuisines.contains("Show me everything") {
+            let lower = cuisines.map { $0.lowercased() }
+            if lower.contains(cuisine) { score += 22 }
         }
 
-        switch diet {
-        case "Vegetarian":
-            if tags.contains("vegetarian") { score += 24 }
-        case "High protein":
-            if tags.contains("high protein") || recipe.macros.protein >= 25 { score += 24 }
-        case "Low carb":
-            if tags.contains("low carb") || recipe.macros.carbs <= 35 { score += 24 }
-        case "Mediterranean":
-            if cuisine == "mediterranean" { score += 24 }
-        default:
-            score += 4
+        // Motivation-based scoring (v2)
+        for m in motivations {
+            switch m {
+            case "Find recipes to cook":
+                score += 4
+            case "Plan my grocery shopping", "Control how much I spend":
+                if recipe.totalMinutes <= 30 { score += 8 }
+            case "Plan my meals for the week":
+                if tags.contains("meal prep") || tags.contains("make ahead") { score += 10 }
+            case "Discover food from around the world":
+                if !["American"].contains(recipe.cuisine) { score += 8 }
+            default: break
+            }
         }
 
-        if skill == "Beginner", recipe.steps.count <= 6 { score += 8 }
-        if skill == "Confident", recipe.totalMinutes >= 25 { score += 4 }
+        // Priority-based scoring (v2)
+        for p in priorities {
+            switch p {
+            case "Quick to make":
+                if recipe.totalMinutes <= 25 { score += 16 }
+            case "Affordable":
+                if recipe.ingredients.count <= 8 { score += 12 }
+            case "Easy to follow":
+                if recipe.steps.count <= 6 { score += 12 }
+            case "Something new":
+                score += 6
+            case "Good for the whole family":
+                if recipe.servings >= 4 { score += 10 }
+            default: break
+            }
+        }
+
+        // Frequency-based: mostly takeout → favor quick
+        if cookFrequency == "Mostly takeout" && recipe.totalMinutes <= 20 { score += 14 }
+
+        // v1 fallback scoring (for users who completed old onboarding)
+        if motivations.isEmpty {
+            switch goal {
+            case "Eat healthier":
+                if recipe.cal <= 550 { score += 12 }
+                if tags.contains("fresh") || tags.contains("low carb") { score += 10 }
+            case "Save time":
+                if recipe.totalMinutes <= 25 || tags.contains("quick") { score += 20 }
+            case "Meal prep":
+                if tags.contains("meal prep") || tags.contains("make ahead") { score += 20 }
+            case "Try new food":
+                if ["Thai", "Mexican", "Mediterranean"].contains(recipe.cuisine) { score += 12 }
+            default: break
+            }
+
+            switch diet {
+            case "Vegetarian":
+                if tags.contains("vegetarian") { score += 24 }
+            case "High protein":
+                if tags.contains("high protein") || recipe.macros.protein >= 25 { score += 24 }
+            case "Low carb":
+                if tags.contains("low carb") || recipe.macros.carbs <= 35 { score += 24 }
+            case "Mediterranean":
+                if cuisine == "mediterranean" { score += 24 }
+            default:
+                score += 4
+            }
+
+            if skill == "Beginner", recipe.steps.count <= 6 { score += 8 }
+            if skill == "Confident", recipe.totalMinutes >= 25 { score += 4 }
+        }
+
         return score
     }
 }

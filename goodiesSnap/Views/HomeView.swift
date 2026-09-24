@@ -487,7 +487,6 @@ struct TonightCard: View {
 
     var body: some View {
         if let recipe {
-            Button { store.open(recipe) } label: {
                 VStack(spacing: 12) {
                     HStack(alignment: .top, spacing: 12) {
                         CoverImage(url: recipe.imageURL)
@@ -533,8 +532,10 @@ struct TonightCard: View {
                 }
                 .padding(16)
                 .softCard(radius: 22)
-            }
-            .buttonStyle(PressableStyle())
+                // The whole card opens the recipe, but via a tap gesture (not a Button)
+                // so the nested "Cook" Button below still receives its own taps.
+                .contentShape(Rectangle())
+                .onTapGesture { store.open(recipe) }
         } else {
             Button { store.openPicker(day: store.todayName) } label: {
                 HStack(spacing: 14) {
@@ -752,7 +753,7 @@ struct EmptyLibraryCard: View {
                         Image(systemName: "plus").font(.system(size: 12, weight: .black))
                         Text("Save a recipe").font(nunito(13.5, .extrabold))
                     }
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(Color.gsFg)
                     .padding(.horizontal, 16)
                     .frame(minHeight: 46)
                 }

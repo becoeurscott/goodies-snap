@@ -1,16 +1,604 @@
 <!doctype html>
-<html lang="en"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>goodiesSnap</title><link rel="stylesheet" href="/style.css"></head>
-<body><div class="wrap">
-<header><div class="mark">🥣</div><div><h1>goodiesSnap</h1></div></header>
-<p>Save any recipe from a link, a video, a photo or a block of text — and cook it from a
-clean, readable card.</p>
-<h2>Legal</h2>
-<nav><a href="/terms.html">Terms of Use</a><a href="/privacy.html">Privacy Policy</a></nav>
-<h2>Support</h2>
-<p>Questions, bug reports, or to report content or an account:
-<a href="mailto:support@goodiessnap.app">support@goodiessnap.app</a>. We answer content
-reports within 24 hours.</p>
-<footer>© 2026 goodiesSnap</footer>
-</div></body></html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>goodiesSnap — One photo. One recipe. Dinner.</title>
+<meta name="description" content="Snap a dish, paste a link, or describe what you're craving — goodiesSnap turns it into a recipe you can cook tonight, plans your week and prices your shopping list.">
+<meta property="og:title" content="goodiesSnap — One photo. One recipe. Dinner.">
+<meta property="og:description" content="The recipe app that turns any photo, video or link into dinner.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="assets/hero-person.webp">
+<meta name="theme-color" content="#FFFBEA">
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<!-- Fonts are self-hosted: loading them from Google sends every visitor's IP to Google (LG München, 3 O 17493/20). -->
+<link href="assets/fonts/fonts.css" rel="stylesheet">
+<script>document.documentElement.classList.add('js')</script>
+<style>
+:root {
+  --yellow: #FDE604;
+  --yellow-soft: #FFF3A3;
+  --ink: #16130A;
+  --ink-2: #2B2615;
+  --cream: #FFFBEA;
+  --paper: #FFFFFF;
+  --muted: #6B6250;
+  --line: rgba(22,19,10,0.09);
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --display: "Bricolage Grotesque", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --text: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--cream);
+  color: var(--ink);
+  font-family: var(--text);
+  font-size: 17px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+img { display: block; max-width: 100%; }
+a { color: inherit; text-decoration: none; }
+.wrap { max-width: 1200px; margin: 0 auto; padding: 0 32px; }
+
+h1, h2, h3 { font-family: var(--display); font-weight: 800; letter-spacing: -0.03em; line-height: 1.02; }
+h2 { font-size: clamp(38px, 5vw, 64px); }
+h3 { font-size: 22px; letter-spacing: -0.015em; line-height: 1.2; }
+.lead { font-size: 19px; color: var(--muted); max-width: 480px; }
+.tag {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--ink);
+  background: var(--yellow);
+  padding: 6px 14px; border-radius: 99px;
+  margin-bottom: 22px;
+}
+.hl {
+  background: linear-gradient(transparent 58%, var(--yellow) 58%, var(--yellow) 92%, transparent 92%);
+  padding: 0 0.06em;
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-weight: 700; font-size: 16px;
+  padding: 15px 26px; border-radius: 99px;
+  transition: transform 0.3s var(--ease), box-shadow 0.3s var(--ease), background 0.2s;
+}
+.btn:hover { transform: translateY(-2px); }
+.btn-ink { background: var(--ink); color: #fff; box-shadow: 0 10px 30px rgba(22,19,10,0.22); }
+.btn-ink:hover { box-shadow: 0 16px 40px rgba(22,19,10,0.3); }
+.btn-ghost { color: var(--ink); border: 1.5px solid rgba(22,19,10,0.18); }
+.btn-ghost:hover { background: rgba(22,19,10,0.04); }
+.store-btn { padding: 11px 24px 11px 20px; }
+.store-btn small { display: block; font-size: 11px; font-weight: 500; opacity: 0.75; line-height: 1.1; }
+.store-btn span { display: block; font-size: 18px; font-weight: 700; line-height: 1.15; letter-spacing: -0.01em; }
+
+/* Reveal — only hidden when JS runs, so content never gets stuck invisible */
+.js .reveal { opacity: 0; transform: translateY(36px); transition: opacity 0.9s var(--ease), transform 0.9s var(--ease); }
+.js .reveal.in { opacity: 1; transform: none; }
+.d1 { transition-delay: 0.08s !important; } .d2 { transition-delay: 0.16s !important; } .d3 { transition-delay: 0.24s !important; }
+
+/* Nav */
+.nav {
+  position: sticky; top: 0; z-index: 50;
+  background: rgba(255,251,234,0.8);
+  backdrop-filter: saturate(160%) blur(16px);
+  -webkit-backdrop-filter: saturate(160%) blur(16px);
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.3s;
+}
+.nav.scrolled { border-bottom-color: var(--line); }
+.nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 72px; }
+.nav-logo img { height: 36px; width: auto; }
+.nav-links { display: flex; align-items: center; gap: 6px; }
+.nav-links a:not(.btn) { font-size: 15px; font-weight: 600; color: var(--muted); padding: 8px 14px; border-radius: 99px; transition: color 0.2s, background 0.2s; }
+.nav-links a:not(.btn):hover { color: var(--ink); background: rgba(22,19,10,0.05); }
+.nav-links .btn { padding: 10px 20px; font-size: 15px; margin-left: 8px; }
+
+/* Hero */
+.hero { padding: 56px 0 40px; position: relative; overflow: hidden; }
+.hero .wrap { display: grid; grid-template-columns: 1.05fr 1fr; gap: 40px; align-items: center; }
+.hero h1 { font-size: clamp(54px, 7.4vw, 104px); margin-bottom: 26px; }
+.hero .lead { margin-bottom: 34px; }
+.hero-ctas { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.hero-note { margin-top: 22px; font-size: 14px; color: var(--muted); display: flex; gap: 18px; flex-wrap: wrap; }
+.hero-note b { color: var(--ink); font-weight: 600; }
+
+.hero-stage { position: relative; height: 640px; }
+.hero-blob {
+  position: absolute; inset: 40px 0 0 20px;
+  background: var(--yellow);
+  border-radius: 48% 52% 44% 56% / 52% 44% 56% 48%;
+  animation: blob 14s ease-in-out infinite alternate;
+}
+@keyframes blob {
+  to { border-radius: 56% 44% 52% 48% / 44% 56% 44% 56%; transform: rotate(6deg) scale(1.03); }
+}
+.hero-phone { position: absolute; filter: drop-shadow(0 30px 50px rgba(22,19,10,0.28)); }
+.hero-phone.main { width: 290px; left: 50%; top: 20px; transform: translateX(-50%); z-index: 3; }
+.hero-phone.back-l { width: 230px; left: 2%; top: 120px; transform: rotate(-9deg); z-index: 2; }
+.hero-phone.back-r { width: 230px; right: 0; top: 130px; transform: rotate(9deg); z-index: 1; }
+.chip {
+  position: absolute; z-index: 4;
+  background: var(--paper); color: var(--ink);
+  font-size: 14px; font-weight: 600;
+  padding: 10px 16px 10px 12px; border-radius: 16px;
+  box-shadow: 0 12px 32px rgba(22,19,10,0.14);
+  display: flex; align-items: center; gap: 10px;
+  animation: float 5s ease-in-out infinite;
+}
+.chip i { width: 30px; height: 30px; border-radius: 10px; background: var(--yellow); display: grid; place-items: center; font-style: normal; font-size: 15px; }
+.chip.c1 { left: -4%; top: 90px; }
+.chip.c2 { right: -2%; bottom: 110px; animation-delay: -2.5s; }
+@keyframes float { 50% { transform: translateY(-10px); } }
+
+/* Hero load-in (pure CSS, no scroll needed) */
+.rise { animation: rise 1s var(--ease) both; }
+.rise.r1 { animation-delay: 0.05s; } .rise.r2 { animation-delay: 0.15s; } .rise.r3 { animation-delay: 0.25s; } .rise.r4 { animation-delay: 0.35s; }
+@keyframes rise { from { opacity: 0; transform: translateY(30px); } }
+.pop { animation: pop 1.2s var(--ease) both; }
+@keyframes pop { from { opacity: 0; transform: translateY(60px) scale(0.94); } }
+.hero-phone.back-l.pop { animation-delay: 0.25s; } .hero-phone.back-r.pop { animation-delay: 0.35s; }
+.hero-phone.main.pop { animation-name: popMain; }
+@keyframes popMain { from { opacity: 0; transform: translate(-50%, 60px) scale(0.94); } }
+
+/* Marquee */
+.marquee { background: var(--ink); color: #fff; padding: 22px 0; overflow: hidden; margin-top: 40px; }
+.marquee-track { display: flex; width: max-content; animation: marquee 32s linear infinite; }
+.marquee-track span {
+  font-family: var(--display); font-weight: 800; font-size: 26px; letter-spacing: -0.02em;
+  padding: 0 28px; white-space: nowrap; display: flex; align-items: center; gap: 56px;
+}
+.marquee-track span::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--yellow); }
+@keyframes marquee { to { transform: translateX(-50%); } }
+
+/* Feature rows */
+.features { padding: 120px 0 40px; }
+.sec-head { text-align: center; max-width: 720px; margin: 0 auto 72px; }
+.sec-head .lead { margin: 18px auto 0; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 72px; align-items: center; margin-bottom: 120px; }
+.row.flip .row-art { order: 2; }
+.row-art {
+  position: relative; border-radius: 36px; overflow: hidden;
+  height: 600px; display: flex; align-items: flex-end; justify-content: center;
+}
+.row-art.yellow { background: var(--yellow); }
+.row-art.ink { background: var(--ink); }
+.row-art.soft { background: var(--yellow-soft); }
+.row-art img { width: 320px; margin-bottom: -60px; filter: drop-shadow(0 30px 50px rgba(0,0,0,0.25)); transition: transform 0.8s var(--ease); }
+.row-art:hover img { transform: translateY(-14px); }
+.row-art .ring { position: absolute; border-radius: 50%; border: 2px solid rgba(22,19,10,0.08); }
+.row-art.ink .ring { border-color: rgba(253,230,4,0.14); }
+.row-art .ring.a { width: 520px; height: 520px; top: -140px; right: -160px; }
+.row-art .ring.b { width: 340px; height: 340px; bottom: -120px; left: -120px; }
+.row-art .note {
+  position: absolute; top: 32px; left: 32px; z-index: 2;
+  background: var(--paper); border-radius: 16px; padding: 12px 16px;
+  font-size: 14px; font-weight: 600; box-shadow: 0 10px 30px rgba(0,0,0,0.12);
+}
+.row-art .note small { display: block; font-weight: 500; color: var(--muted); font-size: 12px; }
+.row-text h2 { font-size: clamp(34px, 4vw, 52px); margin-bottom: 20px; }
+.row-text .lead { margin-bottom: 28px; }
+.ticks { list-style: none; display: grid; gap: 14px; }
+.ticks li { display: flex; gap: 12px; align-items: flex-start; font-size: 16px; }
+.ticks li::before {
+  content: ""; flex-shrink: 0; width: 24px; height: 24px; border-radius: 50%; margin-top: 1px;
+  background: var(--ink) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M7 12.5l3 3 7-7' stroke='%23FDE604' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E") center/100% no-repeat;
+}
+.pill-pro { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; background: var(--ink); color: var(--yellow); padding: 3px 9px; border-radius: 99px; vertical-align: middle; margin-left: 6px; }
+
+/* Gallery */
+.gallery { background: var(--ink); color: #fff; padding: 110px 0 120px; border-radius: 48px; margin: 0 16px; }
+.gallery .sec-head { margin-bottom: 56px; }
+.gallery .lead { color: rgba(255,255,255,0.6); }
+.gallery .tag { background: rgba(253,230,4,0.14); color: var(--yellow); }
+.shots {
+  display: flex; gap: 22px; overflow-x: auto; scroll-snap-type: x mandatory;
+  padding: 10px max(32px, calc((100vw - 1200px) / 2 + 32px)) 30px;
+  scrollbar-width: none;
+}
+.shots::-webkit-scrollbar { display: none; }
+.shot {
+  flex: 0 0 auto; width: 270px; aspect-ratio: 924 / 2000; scroll-snap-align: center;
+  border-radius: 28px; overflow: hidden; background: #2a2412;
+  transition: transform 0.5s var(--ease);
+}
+.shot:hover { transform: translateY(-8px) rotate(-1deg); }
+.shot img { width: 100%; height: 100%; object-fit: cover; }
+.shots-hint { text-align: center; font-size: 14px; color: rgba(255,255,255,0.45); }
+
+/* Steps */
+.steps { padding: 130px 0 110px; }
+.steps-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+.step { background: var(--paper); border: 1px solid var(--line); border-radius: 28px; padding: 36px 32px 40px; }
+.step-n { font-family: var(--display); font-weight: 800; font-size: 64px; line-height: 1; color: var(--yellow); -webkit-text-stroke: 2px var(--ink); margin-bottom: 20px; }
+.step h3 { margin-bottom: 10px; }
+.step p { color: var(--muted); font-size: 16px; }
+
+/* Bento */
+.bento { padding: 0 0 120px; }
+.bento-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+.card { background: var(--paper); border: 1px solid var(--line); border-radius: 28px; padding: 30px; transition: transform 0.4s var(--ease), box-shadow 0.4s var(--ease); }
+.card:hover { transform: translateY(-4px); box-shadow: 0 20px 40px rgba(22,19,10,0.07); }
+.card .ico { width: 48px; height: 48px; border-radius: 14px; background: var(--yellow); display: grid; place-items: center; margin-bottom: 20px; }
+.card .ico svg { width: 24px; height: 24px; stroke: var(--ink); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.card h3 { font-size: 20px; margin-bottom: 8px; }
+.card p { color: var(--muted); font-size: 15px; }
+.card.feature-big { grid-column: span 2; background: var(--yellow); border-color: var(--yellow); display: flex; flex-direction: column; justify-content: flex-end; min-height: 260px; }
+.card.feature-big .ico { background: var(--ink); }
+.card.feature-big .ico svg { stroke: var(--yellow); }
+.card.feature-big h3 { font-size: 30px; }
+.card.feature-big p { color: rgba(22,19,10,0.7); font-size: 17px; max-width: 460px; }
+
+/* Pricing */
+.pricing { padding: 120px 0; background: var(--paper); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; align-items: stretch; }
+.plan { border: 1px solid var(--line); border-radius: 28px; padding: 34px 30px; background: var(--cream); display: flex; flex-direction: column; position: relative; }
+.plan.hot { background: var(--ink); color: #fff; border-color: var(--ink); }
+.plan .badge { position: absolute; top: 24px; right: 24px; background: var(--yellow); color: var(--ink); font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: 99px; }
+.plan-name { font-family: var(--display); font-weight: 800; font-size: 24px; margin-bottom: 14px; }
+.plan-price { font-family: var(--display); font-weight: 800; font-size: 52px; letter-spacing: -0.04em; line-height: 1; }
+.plan-price small { font-family: var(--text); font-size: 16px; font-weight: 500; letter-spacing: 0; opacity: 0.6; }
+.plan-alt { font-size: 14px; opacity: 0.65; margin: 8px 0 24px; min-height: 22px; }
+.plan ul { list-style: none; display: grid; gap: 11px; margin-bottom: 30px; flex: 1; }
+.plan li { font-size: 15px; display: flex; gap: 10px; }
+.plan li::before { content: "✓"; font-weight: 800; color: #B59A00; }
+.plan.hot li::before { color: var(--yellow); }
+.plan li.no { opacity: 0.45; }
+.plan li.no::before { content: "–"; color: inherit; }
+.plan .btn { justify-content: center; width: 100%; }
+.plan.hot .btn { background: var(--yellow); color: var(--ink); box-shadow: none; }
+.fine { text-align: center; font-size: 14px; color: var(--muted); margin-top: 28px; }
+
+/* CTA */
+.cta { padding: 120px 0; }
+.cta-box {
+  background: var(--yellow); border-radius: 48px; overflow: hidden;
+  display: grid; grid-template-columns: 1.2fr 1fr; align-items: end; gap: 20px;
+  padding: 0 0 0 72px; position: relative;
+}
+.cta-box .copy { padding: 84px 0; }
+.cta-box h2 { margin-bottom: 18px; }
+.cta-box .lead { color: rgba(22,19,10,0.7); margin-bottom: 32px; }
+.cta-box img { width: 300px; margin: 0 auto -120px; filter: drop-shadow(0 30px 50px rgba(0,0,0,0.25)); }
+
+/* Footer */
+footer { background: var(--ink); color: rgba(255,255,255,0.6); padding: 56px 0; }
+footer .wrap { display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+footer img { height: 34px; width: auto; filter: invert(1); }
+.foot-links { display: flex; gap: 26px; flex-wrap: wrap; font-size: 15px; }
+.foot-links a:hover { color: #fff; }
+.foot-copy { font-size: 14px; color: rgba(255,255,255,0.4); }
+
+/* Responsive */
+@media (max-width: 980px) {
+  .hero .wrap { grid-template-columns: 1fr; }
+  .hero-copy { text-align: center; }
+  .hero .lead { margin-left: auto; margin-right: auto; }
+  .hero-ctas, .hero-note { justify-content: center; }
+  .hero-stage { height: 560px; max-width: 520px; width: 100%; margin: 0 auto; }
+  .row, .row.flip { grid-template-columns: 1fr; gap: 40px; margin-bottom: 90px; }
+  .row.flip .row-art { order: 0; }
+  .row-art { height: 520px; }
+  .steps-grid, .plans { grid-template-columns: 1fr; max-width: 520px; margin: 0 auto; }
+  .bento-grid { grid-template-columns: 1fr 1fr; }
+  .card.feature-big { grid-column: span 2; }
+  .cta-box { grid-template-columns: 1fr; padding: 0 32px; text-align: center; }
+  .cta-box .copy { padding: 64px 0 0; }
+  .cta-box .lead { margin-left: auto; margin-right: auto; }
+  .cta-box img { width: 240px; margin-bottom: -100px; }
+}
+@media (max-width: 640px) {
+  body { font-size: 16px; }
+  .wrap { padding: 0 20px; }
+  .nav-links a:not(.btn) { display: none; }
+  .nav-logo img { height: 30px; }
+  .hero { padding-top: 36px; }
+  .hero-stage { height: 470px; }
+  .hero-phone.main { width: 220px; }
+  .hero-phone.back-l, .hero-phone.back-r { width: 170px; top: 100px; }
+  .chip { font-size: 12px; }
+  .chip.c1 { left: 0; top: 40px; } .chip.c2 { right: 0; bottom: 60px; }
+  .features { padding-top: 90px; }
+  .sec-head { margin-bottom: 48px; }
+  .row-art { height: 440px; border-radius: 28px; }
+  .row-art img { width: 250px; }
+  .gallery { border-radius: 32px; margin: 0 10px; padding: 80px 0 90px; }
+  .shot { width: 220px; }
+  .bento-grid { grid-template-columns: 1fr; }
+  .card.feature-big { grid-column: auto; }
+  .cta-box { border-radius: 32px; padding: 0 20px; }
+  .marquee-track span { font-size: 20px; gap: 40px; padding: 0 20px; }
+  footer .wrap { flex-direction: column; align-items: flex-start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .js .reveal { opacity: 1; transform: none; }
+}
+</style>
+</head>
+<body>
+
+<header class="nav" id="nav">
+  <div class="wrap">
+    <a class="nav-logo" href="#top" aria-label="goodiesSnap home"><img src="assets/logo-word.svg" alt="goodiesSnap"></a>
+    <nav class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#inside">Inside the app</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#download" class="btn btn-ink">Get the app</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+<section class="hero">
+  <div class="wrap">
+    <div class="hero-copy">
+      <div class="tag rise r1">New on iPhone</div>
+      <h1 class="rise r2">One photo.<br>One recipe.<br><span class="hl">Dinner.</span></h1>
+      <p class="lead rise r3">Snap a dish, paste a video link, or just say what you're craving. goodiesSnap turns it into a recipe you can cook tonight — then plans your week and prices your shopping.</p>
+      <div class="hero-ctas rise r4">
+        <a href="#download" class="btn btn-ink store-btn">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.71 19.5C17.88 20.74 17 21.95 15.66 21.97C14.32 22 13.89 21.18 12.37 21.18C10.84 21.18 10.37 21.95 9.1 22C7.78 22.05 6.8 20.68 5.96 19.47C4.25 17 2.94 12.45 4.7 9.39C5.57 7.87 7.13 6.91 8.82 6.88C10.1 6.86 11.32 7.75 12.11 7.75C12.89 7.75 14.37 6.68 15.92 6.84C16.57 6.87 18.39 7.1 19.56 8.82C19.47 8.88 17.39 10.1 17.41 12.63C17.44 15.65 20.06 16.66 20.09 16.67C20.06 16.74 19.67 18.11 18.71 19.5M13 3.5C13.73 2.67 14.94 2.04 15.94 2C16.07 3.17 15.6 4.35 14.9 5.19C14.21 6.04 13.07 6.7 11.95 6.61C11.8 5.46 12.36 4.26 13 3.5Z"/></svg>
+          <div><small>Download on the</small><span>App Store</span></div>
+        </a>
+        <a href="#features" class="btn btn-ghost">See how it works</a>
+      </div>
+      <div class="hero-note rise r4"><span><b>Free</b> to start</span><span><b>5</b> AI saves every month</span><span>No card needed</span></div>
+    </div>
+
+    <div class="hero-stage" aria-hidden="true">
+      <div class="hero-blob"></div>
+      <img class="hero-phone back-l pop" src="assets/phone-scan.png" alt="">
+      <img class="hero-phone back-r pop" src="assets/phone-shopping.png" alt="">
+      <img class="hero-phone main pop" src="assets/phone-recipe.png" alt="">
+      <div class="chip c1"><i>📸</i>Dish identified</div>
+      <div class="chip c2"><i>🛒</i>$91.50 for the week</div>
+    </div>
+  </div>
+
+  <div class="marquee" aria-hidden="true">
+    <div class="marquee-track">
+      <span>Camera scan</span><span>YouTube</span><span>TikTok</span><span>Instagram</span><span>Recipe blogs</span><span>Pasted text</span><span>"Something spicy"</span>
+      <span>Camera scan</span><span>YouTube</span><span>TikTok</span><span>Instagram</span><span>Recipe blogs</span><span>Pasted text</span><span>"Something spicy"</span>
+    </div>
+  </div>
+</section>
+
+<section class="features" id="features">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="tag">What it does</div>
+      <h2>From “that looks good” to <span class="hl">on the table</span>.</h2>
+    </div>
+
+    <div class="row">
+      <div class="row-art yellow reveal">
+        <span class="ring a"></span><span class="ring b"></span>
+        <div class="note">Plate composition<small>4 ingredients detected</small></div>
+        <img src="assets/phone-scan.png" alt="goodiesSnap identifying a dish and its ingredients" loading="lazy">
+      </div>
+      <div class="row-text reveal d1">
+        <div class="tag">Scan <span class="pill-pro">PRO</span></div>
+        <h2>Point at a plate. Get the recipe.</h2>
+        <p class="lead">At a restaurant, a friend's place, or scrolling a menu — snap the dish and goodiesSnap names it, breaks down what's on the plate, and writes a recipe to make it yourself.</p>
+        <ul class="ticks">
+          <li>Identifies the dish and each ingredient's share of the plate</li>
+          <li>Matches it to recipes you can cook right away</li>
+          <li>Adds every ingredient to your list in one tap</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="row flip">
+      <div class="row-art ink reveal">
+        <span class="ring a"></span><span class="ring b"></span>
+        <div class="note">Squash linguine<small>50 min · serves 4 · 10 steps</small></div>
+        <img src="assets/phone-recipe.png" alt="A clean recipe card in goodiesSnap" loading="lazy">
+      </div>
+      <div class="row-text reveal d1">
+        <div class="tag">Save</div>
+        <h2>Any link becomes a clean recipe card.</h2>
+        <p class="lead">Paste a YouTube, TikTok, Instagram or blog link and goodiesSnap pulls out the ingredients and method — no life stories, no pop-ups, no scrolling past ads.</p>
+        <ul class="ticks">
+          <li>Exact quantities and numbered steps</li>
+          <li>Cook Mode with big text, timers, and the screen kept on</li>
+          <li>Recipe videos play in-app and jump to the step you're on</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="row-art soft reveal">
+        <span class="ring a"></span><span class="ring b"></span>
+        <div class="note">Estimated total<small>All 26 items priced</small></div>
+        <img src="assets/phone-shopping.png" alt="A shopping list grouped by recipe with prices" loading="lazy">
+      </div>
+      <div class="row-text reveal d1">
+        <div class="tag">Shop</div>
+        <h2>Know what dinner costs before you go.</h2>
+        <p class="lead">Every recipe you plan lands on one shopping list, grouped by meal, with prices from your local store — so there are no surprises at the till.</p>
+        <ul class="ticks">
+          <li>One list for the whole week's cooking</li>
+          <li>Pick your store and see an estimated total</li>
+          <li>Tick things off as you shop</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="gallery" id="inside">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="tag">Inside the app</div>
+      <h2>Take a look around.</h2>
+      <p class="lead">Straight from the App Store listing.</p>
+    </div>
+  </div>
+  <div class="shots reveal">
+    <div class="shot"><img src="assets/hero-person.webp" alt="One photo. One recipe. Dinner." loading="lazy"></div>
+    <div class="shot"><img src="assets/feature-save.webp" alt="Know what you need before you shop" loading="lazy"></div>
+    <div class="shot"><img src="assets/feature-scan.webp" alt="Scan a dish to find the recipe" loading="lazy"></div>
+    <div class="shot"><img src="assets/feature-link.webp" alt="Save recipes from videos and links" loading="lazy"></div>
+    <div class="shot"><img src="assets/feature-shopping.webp" alt="See what dinner will cost" loading="lazy"></div>
+  </div>
+  <p class="shots-hint">Swipe to see more →</p>
+</section>
+
+<section class="steps">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="tag">How it works</div>
+      <h2>Three steps. Zero meal-time stress.</h2>
+    </div>
+    <div class="steps-grid">
+      <div class="step reveal">
+        <div class="step-n">1</div>
+        <h3>Capture it</h3>
+        <p>Snap a dish, paste a link, or describe what you're in the mood for. The recipe is ready in seconds.</p>
+      </div>
+      <div class="step reveal d1">
+        <div class="step-n">2</div>
+        <h3>Plan &amp; shop</h3>
+        <p>Drop recipes into your week. Everything you need goes onto one priced shopping list.</p>
+      </div>
+      <div class="step reveal d2">
+        <div class="step-n">3</div>
+        <h3>Cook</h3>
+        <p>Follow along in Cook Mode, one big step at a time, with timers built in.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="bento">
+  <div class="wrap">
+    <div class="bento-grid">
+      <div class="card feature-big reveal">
+        <div class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></div>
+        <h3>790+ recipes from around the world</h3>
+        <p>Not sure what to cook? Browse the Discover catalog by country and food type, and save anything that catches your eye.</p>
+      </div>
+      <div class="card reveal d1">
+        <div class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></div>
+        <h3>Weekly meal plan</h3>
+        <p>See the whole week's dinners at a glance.</p>
+      </div>
+      <div class="card reveal">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
+        <h3>Recipe reels</h3>
+        <p>A community feed of cooking videos and photos from other cooks.</p>
+      </div>
+      <div class="card reveal d1">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 21s-7-4.5-7-11a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 6.5-7 11-7 11z"/></svg></div>
+        <h3>Made for your taste</h3>
+        <p>Tell it what you like and avoid; suggestions follow along.</p>
+      </div>
+      <div class="card reveal d2">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 14-5.3M20 12a8 8 0 0 1-14 5.3"/><path d="M18 3v4h-4M6 21v-4h4"/></svg></div>
+        <h3>Synced to your account</h3>
+        <p>Your recipes, plan and list follow you to any iPhone.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="pricing" id="pricing">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="tag">Pricing</div>
+      <h2>Start free. Upgrade when you cook more.</h2>
+    </div>
+    <div class="plans">
+      <div class="plan reveal">
+        <div class="plan-name">Free</div>
+        <div class="plan-price">$0</div>
+        <div class="plan-alt">Free forever</div>
+        <ul>
+          <li>5 AI recipe saves a month</li>
+          <li>Save from links, videos and text</li>
+          <li>Meal plan, shopping list, Cook Mode</li>
+          <li>Discover catalog &amp; community</li>
+          <li class="no">Camera dish scan</li>
+        </ul>
+        <a href="#download" class="btn btn-ghost">Download free</a>
+      </div>
+      <div class="plan reveal d1">
+        <div class="plan-name">Plus</div>
+        <div class="plan-price">$9.99<small> / month</small></div>
+        <div class="plan-alt">or $79.99 / year — save 33%</div>
+        <ul>
+          <li>100 AI recipe saves a month</li>
+          <li>Everything in Free</li>
+          <li class="no">Camera dish scan</li>
+        </ul>
+        <a href="#download" class="btn btn-ink">Choose Plus</a>
+      </div>
+      <div class="plan hot reveal d2">
+        <span class="badge">Best value</span>
+        <div class="plan-name">Pro</div>
+        <div class="plan-price">$12.99<small> / month</small></div>
+        <div class="plan-alt">or $99.99 / year — save 36%</div>
+        <ul>
+          <li>400 AI actions a month</li>
+          <li>Camera dish scan</li>
+          <li>Everything in Plus</li>
+        </ul>
+        <a href="#download" class="btn">Try Pro free for 7 days</a>
+      </div>
+    </div>
+    <p class="fine">Prices in USD. Subscriptions renew automatically and can be cancelled any time in your App Store settings.</p>
+  </div>
+</section>
+
+<section class="cta" id="download">
+  <div class="wrap">
+    <div class="cta-box reveal">
+      <div class="copy">
+        <h2>What's for dinner?<br>Sorted.</h2>
+        <p class="lead">Download goodiesSnap free on iPhone and turn tonight's craving into a real meal.</p>
+        <a href="#" class="btn btn-ink store-btn">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.71 19.5C17.88 20.74 17 21.95 15.66 21.97C14.32 22 13.89 21.18 12.37 21.18C10.84 21.18 10.37 21.950 9.1 22C7.78 22.05 6.8 20.68 5.96 19.47C4.25 17 2.94 12.45 4.7 9.39C5.57 7.87 7.13 6.91 8.82 6.88C10.1 6.86 11.32 7.75 12.11 7.75C12.89 7.75 14.37 6.68 15.92 6.84C16.57 6.87 18.39 7.1 19.56 8.82C19.47 8.88 17.39 10.1 17.41 12.63C17.44 15.65 20.06 16.66 20.09 16.67C20.06 16.74 19.67 18.11 18.71 19.5M13 3.5C13.73 2.67 14.94 2.04 15.940 2C16.07 3.17 15.6 4.35 14.9 5.19C14.21 6.04 13.07 6.7 11.95 6.61C11.8 5.46 12.36 4.26 13 3.5Z"/></svg>
+          <div><small>Download on the</small><span>App Store</span></div>
+        </a>
+      </div>
+      <img src="assets/phone-splash.png" alt="" loading="lazy">
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <img src="assets/logo-word.svg" alt="goodiesSnap">
+    <div class="foot-links">
+      <a href="terms.html">Terms of Use</a>
+      <a href="privacy.html">Privacy Policy</a>
+      <a href="mailto:contact@goodiessnap.com">Contact &amp; Support</a>
+    </div>
+    <div class="foot-copy">© 2026 goodiesSnap</div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var els = document.querySelectorAll('.reveal');
+  if (!('IntersectionObserver' in window)) { els.forEach(function (el) { el.classList.add('in'); }); return; }
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' });
+  els.forEach(function (el) { io.observe(el); });
+
+  var nav = document.getElementById('nav');
+  window.addEventListener('scroll', function () { nav.classList.toggle('scrolled', window.scrollY > 10); }, { passive: true });
+})();
+</script>
+</body>
+</html>

@@ -185,12 +185,16 @@ enum PaywallReason: Equatable {
     case outOfActions
     case cameraIsPro
     case upgrade
+    /// Shown once, at the end of first run — after the user has a recipe, a list, a cost and
+    /// a week, and can therefore judge the offer against something they've actually used.
+    case onboardingComplete
 
     var title: String {
         switch self {
         case .outOfActions: return "You've used this month's AI actions"
         case .cameraIsPro: return "Scanning a dish is a Pro feature"
-        case .upgrade: return "Do more with goodiesSnap AI"
+        case .upgrade: return "Your personal food planner"
+        case .onboardingComplete: return "Keep your food system"
         }
     }
 
@@ -201,9 +205,15 @@ enum PaywallReason: Equatable {
         case .cameraIsPro:
             return "Point your camera at any plate and Pro identifies the dish, breaks down what's on it, and writes the recipe."
         case .upgrade:
-            return "Save recipes from links, video, and text — or go Pro and scan a dish with your camera."
+            return "Import from anywhere, plan your week, and know what the shop will cost before you go."
+        case .onboardingComplete:
+            return "Your recipes, plan and list are saved either way. Upgrade when you want to import without limits and plan every week."
         }
     }
+
+    /// Whether the screen should offer a plain way out. Only the end-of-onboarding pitch
+    /// does: the user has not hit a limit, so refusing has to be as easy as accepting.
+    var isDismissible: Bool { self == .onboardingComplete || self == .upgrade }
 
     /// Which plan the screen should push hardest.
     var highlight: Entitlement.Plan { self == .cameraIsPro ? .pro : .plus }

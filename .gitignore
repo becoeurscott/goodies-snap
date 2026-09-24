@@ -36,3 +36,11 @@ xcuserdata/
 
 # admin dashboard local config (contains the anon key)
 admin/config.js
+fastlane/.env
+fastlane/*.p8
+fastlane/report.xml
+fastlane/README.md
+
+# local Ruby bundle for Fastlane
+.bundle/
+vendor/bundle/

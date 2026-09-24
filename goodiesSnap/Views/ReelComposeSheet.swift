@@ -71,7 +71,7 @@ struct ReelComposeSheet: View {
                         if social.reelUploading { ProgressView().tint(.white) }
                         else { Text("Post reel").font(nunito(15, .extrabold)) }
                     }
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.gsFg)
                     .frame(maxWidth: .infinity, minHeight: 54)
                 }
                 .buttonStyle(DarkButtonStyle())

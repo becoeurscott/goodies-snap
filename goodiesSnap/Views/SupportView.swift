@@ -90,14 +90,14 @@ struct SupportView: View {
                         Text("Start a conversation")
                             .font(nunito(15, .extrabold))
                     }
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(Color.gsFg)
                     .frame(maxWidth: .infinity, minHeight: 54)
                 }
                 .buttonStyle(DarkButtonStyle())
                 .padding(.top, 24)
 
                 Link(destination: Legal.support) {
-                    Text("Or email us at support@goodiessnap.app")
+                    Text("Or email us at contact@goodiessnap.com")
                         .font(nunito(12, .semibold))
                         .foregroundStyle(Color.fg(0.45))
                         .frame(maxWidth: .infinity)
@@ -189,13 +189,13 @@ struct SupportView: View {
     }
 
     @State private var chatText = ""
+    @State private var sending = false
     @State private var messages: [ChatMessage] = [
-        ChatMessage(text: "Hello! 👋 I'm here to help with goodiesSnap. Send me a message to start chatting.", isBot: true, time: "now")
+        ChatMessage(text: "Hey! 👋 I'm your goodiesSnap assistant. Ask me anything about recipes, subscriptions, meal planning, or how things work in the app.", isBot: true, time: "now")
     ]
 
     private var chatView: some View {
         VStack(spacing: 0) {
-            // Chat header
             HStack(spacing: 12) {
                 Button {
                     withAnimation(AppStore.navAnimation) { showChat = false }
@@ -227,13 +227,15 @@ struct SupportView: View {
                 Rectangle().fill(Color.fg(0.08)).frame(height: 1)
             }
 
-            // Messages
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 12) {
                         ForEach(messages) { msg in
                             chatBubble(msg)
                                 .id(msg.id)
+                        }
+                        if sending {
+                            typingIndicator
                         }
                     }
                     .padding(.horizontal, 22)
@@ -246,7 +248,6 @@ struct SupportView: View {
                 }
             }
 
-            // Input bar
             HStack(spacing: 10) {
                 TextField("Your question", text: $chatText, axis: .vertical)
                     .font(nunito(14, .semibold))
@@ -265,10 +266,10 @@ struct SupportView: View {
                 } label: {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.system(size: 32, weight: .medium))
-                        .foregroundStyle(chatText.trimmingCharacters(in: .whitespaces).isEmpty ? Color.fg(0.2) : Color.gsPeach)
+                        .foregroundStyle(chatText.trimmingCharacters(in: .whitespaces).isEmpty || sending ? Color.fg(0.2) : Color.gsPeach)
                 }
                 .buttonStyle(.plain)
-                .disabled(chatText.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(chatText.trimmingCharacters(in: .whitespaces).isEmpty || sending)
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 12)
@@ -276,6 +277,39 @@ struct SupportView: View {
                 Rectangle().fill(Color.fg(0.08)).frame(height: 1)
             }
         }
+    }
+
+    private var typingIndicator: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "bubble.left.fill")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(Color.gsPeach)
+                .clipShape(Circle())
+
+            HStack(spacing: 4) {
+                ForEach(0..<3, id: \.self) { i in
+                    Circle()
+                        .fill(Color.fg(0.3))
+                        .frame(width: 6, height: 6)
+                        .opacity(0.4)
+                        .animation(
+                            .easeInOut(duration: 0.5)
+                                .repeatForever(autoreverses: true)
+                                .delay(Double(i) * 0.15),
+                            value: sending
+                        )
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 14)
+            .background(Color.fg(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func chatBubble(_ msg: ChatMessage) -> some View {
@@ -313,7 +347,7 @@ struct SupportView: View {
 
     private func sendMessage() {
         let text = chatText.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty, !sending else { return }
 
         let formatter = DateFormatter()
         formatter.dateFormat = "h:mm a"
@@ -321,33 +355,131 @@ struct SupportView: View {
 
         messages.append(ChatMessage(text: text, isBot: false, time: time))
         chatText = ""
+        sending = true
         Haptics.tap(.light)
 
         Task {
-            try? await Task.sleep(for: .seconds(1.2))
-            let reply = autoReply(for: text)
+            let reply = await callSupportAI()
+            sending = false
             messages.append(ChatMessage(text: reply, isBot: true, time: formatter.string(from: Date())))
         }
     }
 
-    private func autoReply(for question: String) -> String {
-        let q = question.lowercased()
-        if q.contains("cancel") || q.contains("subscription") {
-            return "To manage or cancel your subscription, go to Settings → your name → Subscriptions → goodiesSnap on your iPhone. Your saved recipes stay yours on any plan."
+    // MARK: - Claude AI support
+
+    private static let supportSystemPrompt = """
+    You are the goodiesSnap support assistant — a friendly, helpful AI built into the goodiesSnap iOS recipe app.
+
+    About the app:
+    - goodiesSnap lets users save recipes from links, YouTube videos, photos, or typed text using AI
+    - The AI reads the input and creates a clean recipe card with ingredients, steps, cook time, and nutrition
+    - Users can plan meals for the week by dropping recipes onto days in the Plan tab
+    - The shopping list builds itself from planned meals, sorted by aisle
+    - Users can discover recipes in the Discover tab (browse by cuisine, food type, cook time, calories)
+    - The Community tab shows a TikTok-style reel feed where users share food posts
+    - Recipes can be cooked step-by-step with built-in timers (Cook mode)
+
+    Features:
+    - Save recipe: tap + on Home → paste link, YouTube URL, type text, or snap a photo
+    - Meal planner: Plan tab → tap a day → add recipes → shopping list auto-generates
+    - Shopping list: Shopping tab → check off items as you shop
+    - Discover: browse 700+ recipes by cuisine, food type, cook time, calories
+    - Community: vertical reel feed of food posts from other users
+    - Cook mode: step-by-step cooking with timers, hands-free
+    - Profile: edit name, view stats, manage subscription
+
+    Subscription plans:
+    - Free: 5 AI actions per month
+    - Plus: 100 AI actions per month
+    - Pro: 400 AI actions per month
+    - AI actions are consumed when importing a recipe (reading a link/photo/text)
+    - To cancel: iPhone Settings → your name → Subscriptions → goodiesSnap
+
+    Account:
+    - Sign in with email/password or Google
+    - Disconnect (sign out): Profile → bottom of screen → Disconnect (signs out, keeps account)
+    - Delete account: Profile → Privacy & legal → Delete my account (permanent, removes posts/comments)
+    - Recipes saved on the device stay on the device even after deletion
+
+    Rules:
+    - Keep answers short (2-4 sentences max), warm, and helpful
+    - Use simple language, no technical jargon
+    - If you don't know something specific, suggest emailing contact@goodiessnap.com
+    - Never make up features that don't exist
+    - Never ask for passwords, payment info, or personal data
+    - You can use one emoji per reply max
+    """
+
+    private func callSupportAI() async -> String {
+        let key = store.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else {
+            return "I'm not able to connect right now. For help, email us at contact@goodiessnap.com 💛"
         }
-        if q.contains("delete") || q.contains("account") {
-            return "You can delete your account from Profile → Privacy & legal → Delete my account. This is permanent and removes your posts and comments, but recipes on your device stay."
+
+        let provider = RecipeExtractor.Provider.forKey(key)
+        let history: [[String: Any]] = messages.compactMap { msg in
+            guard msg.text != messages.first?.text else { return nil }
+            return ["role": msg.isBot ? "assistant" : "user", "content": msg.text]
         }
-        if q.contains("save") || q.contains("recipe") || q.contains("import") {
-            return "Tap the + button on the Home screen to save a recipe. You can paste a web link, YouTube URL, type text, or snap a photo — the AI creates a clean recipe card for you."
+
+        var request: URLRequest
+        var body: [String: Any]
+
+        switch provider {
+        case .anthropic:
+            request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
+            request.setValue(key, forHTTPHeaderField: "x-api-key")
+            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+            body = [
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 300,
+                "system": Self.supportSystemPrompt,
+                "messages": history,
+            ]
+
+        case .openRouter:
+            request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            request.setValue("https://goodiessnap.app", forHTTPHeaderField: "HTTP-Referer")
+            request.setValue("goodiesSnap", forHTTPHeaderField: "X-Title")
+            body = [
+                "model": "anthropic/claude-haiku-4-5-20251001",
+                "max_tokens": 300,
+                "messages": [["role": "system", "content": Self.supportSystemPrompt]] + history,
+            ]
         }
-        if q.contains("plan") || q.contains("meal") || q.contains("shopping") {
-            return "Open the Plan tab to drop recipes onto your week. Once planned, the shopping list builds itself, sorted by aisle. Head to the Shopping tab to check items off."
+
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return "Something went wrong. Try again or email contact@goodiessnap.com 💛"
+            }
+
+            switch provider {
+            case .anthropic:
+                if let content = json["content"] as? [[String: Any]],
+                   let text = content.first?["text"] as? String {
+                    return text
+                }
+            case .openRouter:
+                if let choices = json["choices"] as? [[String: Any]],
+                   let message = choices.first?["message"] as? [String: Any],
+                   let text = message["content"] as? String {
+                    return text
+                }
+            }
+
+            return "I couldn't process that. Try rephrasing or email contact@goodiessnap.com 💛"
+        } catch {
+            return "Connection issue — check your internet and try again, or email contact@goodiessnap.com 💛"
         }
-        if q.contains("ai") || q.contains("action") || q.contains("limit") {
-            return "AI actions are used each time goodiesSnap reads a link, photo or text to create a recipe. Free: 5/month, Plus: 100/month, Pro: 400/month. Upgrade in Profile → Upgrade to Pro."
-        }
-        return "Thanks for reaching out! For detailed help, email us at support@goodiessnap.app and we'll get back to you shortly. 💛"
     }
 
     // MARK: - Shared header

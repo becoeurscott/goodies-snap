@@ -133,7 +133,7 @@ struct RecipeDetailView: View {
                         } label: {
                             Text("▶ Start cooking")
                                 .font(nunito(16, .extrabold))
-                                .foregroundStyle(Color.white)
+                                .foregroundStyle(Color.gsFg)
                                 .frame(maxWidth: .infinity, minHeight: 56)
                         }
                         .buttonStyle(CreamButtonStyle())
@@ -190,7 +190,7 @@ struct RecipeDetailView: View {
                 Button { store.goBack() } label: {
                     Text("Go back")
                         .font(nunito(14, .extrabold))
-                        .foregroundStyle(Color.white)
+                        .foregroundStyle(Color.gsFg)
                         .padding(.horizontal, 24)
                         .frame(minHeight: 48)
                 }

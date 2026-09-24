@@ -33,8 +33,9 @@ extension Color {
         )
     }
 
-    /// Screen background — pure white.
-    static let gsBg = Color(hex: 0xFFFFFF)
+    /// Screen background — a warm off-white so the app sits in the welcome screen's
+    /// amber world instead of stark white. Cards stay pure white and pop off it.
+    static let gsBg = Color(hex: 0xFFFBF2)
     /// Primary text — near-black with a warm undertone.
     static let gsFg = Color(hex: 0x1E1A10)
     /// Cards / sheets — pure white, popping off the tinted background.
@@ -134,11 +135,20 @@ extension View {
 
 // MARK: - Buttons
 
-/// Primary CTA — charcoal pill with white text (reference "Get Started").
+/// Primary CTA — amber-gold pill with dark ink, echoing the welcome screen's brand
+/// gradient. Yellow leads the app; dark text keeps it legible (white on gold fails AA).
 struct DarkButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .background(configuration.isPressed ? Color.gsFgHover : Color.gsDock)
+            .foregroundStyle(Color.gsFg)
+            .background(
+                LinearGradient(
+                    colors: configuration.isPressed
+                        ? [Color(hex: 0xE8A800), Color(hex: 0xE07C05)]
+                        : [Color.gsPeach, Color.gsBrandBottom],
+                    startPoint: .top, endPoint: .bottom
+                )
+            )
             .clipShape(Capsule())
     }
 }

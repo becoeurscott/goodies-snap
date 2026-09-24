@@ -150,7 +150,7 @@ struct MealPickerSheet: View {
                             } label: {
                                 Text("Save a recipe")
                                     .font(nunito(13.5, .extrabold))
-                                    .foregroundStyle(Color.white)
+                                    .foregroundStyle(Color.gsFg)
                                     .padding(.horizontal, 16)
                                     .frame(minHeight: 44)
                             }

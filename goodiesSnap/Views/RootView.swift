@@ -14,12 +14,6 @@ struct RootView: View {
                 appContent
             }
 
-            if store.phase == .welcome {
-                WelcomeView()
-                    .transition(.opacity)
-                    .zIndex(72)
-            }
-
             if store.phase == .onboard {
                 OnboardingView()
                     .transition(.opacity)
@@ -55,6 +49,7 @@ struct RootView: View {
         // Sign-in state and the post-sign-in redirect are driven by SocialStore.onSignedIn
         // (wired in App.swift) — a deterministic callback, not a fragile view onChange.
         .onChange(of: social.signedIn) { _, yes in store.isAuthenticated = yes }
+        .onChange(of: social.isGuest) { _, yes in store.isGuestSession = yes }
         // The token is what lets AI calls use the metered proxy instead of a local key.
         .onChange(of: social.session?.accessToken) { _, token in
             store.aiToken = token
@@ -71,17 +66,20 @@ struct RootView: View {
         }
         .onAppear {
             store.isAuthenticated = social.signedIn
+            store.isGuestSession = social.isGuest
             store.aiToken = social.session?.accessToken
             store.currentUserID = social.session?.userID
             // Launch-argument navigation (`-gsScreen feed`), used by UI automation.
             if let target = UserDefaults.standard.string(forKey: "gsScreen") {
                 jump(to: target)
             }
-            // Onboarding automation (`-gsOnboard 1`) to screenshot a specific slide.
+            // Onboarding automation (`-gsOnboard 4`) to screenshot a specific step of the
+            // value-first flow. Indexes into `AppStore.OnboardStep`.
             if let idx = UserDefaults.standard.string(forKey: "gsOnboard"), let i = Int(idx) {
                 withTransaction(Transaction(animation: nil)) {
                     store.phase = .onboard
-                    store.obIndex = max(0, min(i, OnboardingView.pages.count - 1))
+                    let steps = AppStore.OnboardStep.allCases
+                    store.onboard.step = steps[max(0, min(i, steps.count - 1))]
                 }
             }
             // Account-step automation (`-gsCreateAccount 1`).
@@ -328,7 +326,7 @@ struct RootView: View {
                 case .basket: BasketView()
                 case .plan: MealPlanView()
                 case .profile: ProfileView()
-                case .feed: ReelsView()
+                case .feed: FeedView()
                 case .reelProfile: ReelProfileView()
                 case .discover: DiscoverView()
                 case .paywall: PaywallView()
@@ -503,12 +501,12 @@ private struct BarGlass<S: InsettableShape>: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
             content
-                .glassEffect(.regular.tint(Color.gsDock.opacity(0.92)), in: shape)
+                .glassEffect(.regular.tint(Color(hex: 0x231705).opacity(0.92)), in: shape)
                 .glassEffectID(id, in: ns)
         } else {
             content
                 .background(.ultraThinMaterial, in: shape)
-                .background(Color.gsDock.opacity(0.72), in: shape)
+                .background(Color(hex: 0x231705).opacity(0.72), in: shape)
                 .overlay(shape.strokeBorder(Color.white.opacity(0.16), lineWidth: 1))
                 .shadow(color: Color.black.opacity(0.22), radius: 22, x: 0, y: 10)
         }

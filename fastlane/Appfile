@@ -1,0 +1,7 @@
+app_identifier("com.goodies.goodiesSnap")
+
+# App Store Connect app Apple ID (numeric). Already known for goodiesSnap.
+# fastlane uses this to resolve the app for TestFlight/App Store uploads.
+# apple_id / itc_team_id / team_id are intentionally NOT hardcoded — auth is
+# handled by the App Store Connect API key (see Fastfile / .env), so no Apple
+# ID password lives in the repo.
