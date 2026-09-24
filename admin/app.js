@@ -75,6 +75,18 @@ function enter() {
     b.hidden = !can(b.dataset.min);
   });
   show("overview");
+  refreshSupportBadge();
+  setInterval(refreshSupportBadge, 60_000);
+}
+
+// Count of conversations waiting on a person, shown next to "Support" in the nav.
+async function refreshSupportBadge() {
+  try {
+    const waiting = await rows("support_conversations", "select=id&status=eq.needs_human&limit=100");
+    const b = $("#supportBadge");
+    b.textContent = waiting.length >= 100 ? "99+" : String(waiting.length);
+    b.classList.toggle("hidden", waiting.length === 0);
+  } catch { /* table not deployed yet */ }
 }
 
 $("#go").addEventListener("click", signIn);
@@ -193,6 +205,8 @@ const TITLES = {
   users:    ["Members", "Accounts, plans and quota"],
   posts:    ["Community", "Posts people have shared"],
   reports:  ["Moderation", "Reported content awaiting a decision"],
+  support:  ["Support", "Customer conversations — the assistant answers, your team takes over"],
+  knowledge:["Assistant", "What the support assistant knows and how it behaves"],
   catalog:  ["Catalog", "The Discover recipe collection"],
   subs:     ["Subscriptions", "Apple subscription bindings"],
   groups:   ["Groups", "Community groups"],
@@ -218,7 +232,11 @@ const ago = d => {
 document.querySelectorAll("nav button").forEach(b =>
   b.addEventListener("click", () => show(b.dataset.v)));
 
+// Views that poll register their timer here so leaving the view stops it.
+let viewTimer = null;
+
 async function show(v) {
+  clearInterval(viewTimer); viewTimer = null;
   document.querySelectorAll("nav button").forEach(b =>
     b.setAttribute("aria-current", String(b.dataset.v === v)));
   $("#title").textContent = TITLES[v][0];
@@ -612,6 +630,174 @@ const VIEWS = {
       try { await adminFn({ action: "delete_content", targetType: tr.dataset.tt, id: tr.dataset.tid }); show("reports"); }
       catch (e) { alert("Couldn't delete: " + e.message); b.disabled = false; b.textContent = "Delete"; }
     }));
+  },
+
+  async support() {
+    const FILTERS = [["needs_human", "Needs you"], ["human", "With team"], ["ai", "Assistant"], ["closed", "Closed"], ["all", "All"]];
+    const REASONS = { customer_asked: "asked for a person", sensitive_topic: "money / legal / security", low_confidence: "assistant unsure",
+      ai_unavailable: "AI unavailable", rate_limited: "too many messages", assistant_disabled: "assistant off" };
+    let filter = sessionStorage.getItem("gs_support_filter") || "needs_human";
+    let openId = null;
+
+    const render = async () => {
+      const q = filter === "all" ? "" : `&status=eq.${filter}`;
+      const convs = await rows("support_conversations",
+        `select=id,app_id,user_id,status,handoff_reason,subject,last_message_at${q}&order=last_message_at.desc&limit=100`);
+      const ids = [...new Set(convs.map(c => c.user_id))];
+      const people = ids.length ? await rows("profiles", `select=id,display_name&id=in.(${ids.join(",")})`).catch(() => []) : [];
+      const names = Object.fromEntries(people.map(p => [p.id, p.display_name]));
+      if (!openId && convs.length) openId = convs[0].id;
+
+      $("#view").innerHTML = `
+        <div class="toolbar">${FILTERS.map(([k, l]) => `<button class="fbtn" data-f="${k}" aria-pressed="${k === filter}">${l}</button>`).join("")}
+          <div style="flex:1"></div><span class="note" style="color:var(--muted);font-size:12.5px">Refreshes every 10s</span></div>
+        <div class="inbox">
+          <div class="card list">${convs.map(c => `
+            <button class="conv" data-id="${c.id}" aria-current="${c.id === openId}">
+              <div class="t"><span>${esc(names[c.user_id] || "Customer")}</span><span class="st st-${c.status}">${c.status.replace("_", " ")}</span>
+                <span style="margin-left:auto;color:var(--muted);font-weight:600;font-size:12px">${ago(c.last_message_at)}</span></div>
+              <div class="s">${esc(c.subject || "—")}</div>
+              ${c.status === "needs_human" && c.handoff_reason ? `<div class="s" style="color:var(--stop)">${esc(REASONS[c.handoff_reason] || c.handoff_reason)}</div>` : ""}
+            </button>`).join("") || `<div class="empty">No conversations here</div>`}
+          </div>
+          <div class="card" id="pane">${openId ? `<div class="spin">Loading…</div>` : `<div class="empty">Select a conversation</div>`}</div>
+        </div>`;
+
+      document.querySelectorAll("[data-f]").forEach(b => b.addEventListener("click", () => {
+        filter = b.dataset.f; openId = null; sessionStorage.setItem("gs_support_filter", filter); render();
+      }));
+      document.querySelectorAll(".conv").forEach(b => b.addEventListener("click", () => {
+        openId = b.dataset.id;
+        document.querySelectorAll(".conv").forEach(x => x.setAttribute("aria-current", String(x === b)));
+        renderPane(convs.find(c => c.id === openId), names);
+      }));
+      if (openId) renderPane(convs.find(c => c.id === openId), names);
+    };
+
+    const renderPane = async (conv, names, keepDraft = false) => {
+      const pane = $("#pane");
+      if (!conv) { pane.innerHTML = `<div class="empty">Select a conversation</div>`; return; }
+      const draft = keepDraft ? ($("#reply")?.value || "") : "";
+      const msgs = await rows("support_messages",
+        `select=sender,author_name,body,created_at,model,fallback&conversation_id=eq.${conv.id}&order=created_at.asc&limit=500`);
+      const who = m => m.sender === "user" ? esc(names[conv.user_id] || "Customer")
+        : m.sender === "agent" ? esc(m.author_name || "Team")
+        : m.sender === "ai" ? `Assistant${m.model ? ` · ${esc(m.model)}${m.fallback ? " (backup)" : ""}` : ""}` : "System";
+      const canAct = can("SUPPORT");
+      pane.innerHTML = `
+        <div class="panel-h" style="padding:14px 16px;margin:0;border-bottom:1px solid var(--line)">
+          <h2 style="font-size:15px">${esc(names[conv.user_id] || "Customer")} <span class="st st-${conv.status}">${conv.status.replace("_", " ")}</span></h2>
+          <span class="note">${esc(conv.app_id)}</span>
+          ${canAct ? `<div style="margin-left:auto;display:flex;gap:8px">
+            ${conv.status !== "ai" && conv.status !== "closed" ? `<button class="btn ghost" data-st="ai" title="The assistant answers the next message">Hand back to assistant</button>` : ""}
+            ${conv.status !== "closed" ? `<button class="btn ghost" data-st="closed">Close</button>` : ""}
+          </div>` : ""}
+        </div>
+        <div class="thread" id="thread">${msgs.map(m => `
+          <div class="bub ${m.sender === "system" ? "ai" : m.sender}"><div class="who">${who(m)} · ${ago(m.created_at)}</div>${esc(m.body)}</div>`).join("")}
+        </div>
+        ${canAct ? `<div class="composer">
+          <textarea class="search" id="reply" placeholder="Reply to the customer — they see it in the app with your name">${esc(draft)}</textarea>
+          <button class="btn" id="send">Send</button></div>` : ""}`;
+      const th = $("#thread"); th.scrollTop = th.scrollHeight;
+
+      pane.querySelectorAll("[data-st]").forEach(b => b.addEventListener("click", async () => {
+        b.disabled = true;
+        try { await adminFn({ action: "support_set_status", conversationId: conv.id, status: b.dataset.st }); refreshSupportBadge(); render(); }
+        catch (e) { alert("Couldn't update: " + e.message); b.disabled = false; }
+      }));
+      $("#send")?.addEventListener("click", async () => {
+        const text = $("#reply").value.trim(); if (!text) return;
+        const s = $("#send"); s.disabled = true; s.textContent = "Sending…";
+        try {
+          await adminFn({ action: "support_reply", conversationId: conv.id, text });
+          conv.status = "human"; refreshSupportBadge(); renderPane(conv, names);
+        } catch (e) { alert("Couldn't send: " + e.message); s.disabled = false; s.textContent = "Send"; }
+      });
+    };
+
+    await render();
+    // New customer messages show up without a reload; an unsent reply is kept.
+    viewTimer = setInterval(async () => {
+      if (document.activeElement?.id === "reply" && $("#reply").value) return;
+      try {
+        const conv = openId && (await rows("support_conversations", `select=id,app_id,user_id,status,handoff_reason,subject,last_message_at&id=eq.${openId}`))[0];
+        if (conv) {
+          const p = await rows("profiles", `select=id,display_name&id=eq.${conv.user_id}`).catch(() => []);
+          renderPane(conv, Object.fromEntries(p.map(x => [x.id, x.display_name])), true);
+        }
+      } catch { /* next tick */ }
+    }, 10_000);
+  },
+
+  async knowledge() {
+    const [apps, arts] = await Promise.all([
+      rows("support_apps", "select=*&order=id.asc"),
+      rows("support_articles", "select=id,app_id,title,body,active,embedding_model,updated_at&order=updated_at.desc"),
+    ]);
+    const app = apps[0];
+    if (!app) { $("#view").innerHTML = `<div class="card panel"><div class="empty">No assistant configured yet</div></div>`; return; }
+    const admin = can("ADMIN");
+
+    $("#view").innerHTML = `
+      <div class="card panel"><div class="panel-h"><h2>${esc(app.name)} assistant</h2>
+        <span class="note">${app.enabled ? '<span class="pill p-pro">on</span>' : '<span class="pill p-free">off — every message goes to the team</span>'} · model ${esc(app.chat_model)}</span>
+        ${admin ? `<div style="margin-left:auto"><button class="btn ghost" id="editApp">Edit behaviour</button></div>` : ""}</div>
+        <div class="kv"><div class="k">When handing over</div><div class="v">${esc(app.handoff_message)}</div></div>
+      </div>
+      <div class="toolbar" style="margin-top:14px"><div style="flex:1"></div>${can("SUPPORT") ? `<button class="btn" id="addArt">+ New article</button>` : ""}</div>
+      <div class="card panel"><div class="panel-h"><h2>Knowledge articles</h2><span class="note">${arts.length} · the assistant answers from these</span></div>
+      <div class="tw"><table><thead><tr><th>Article</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead><tbody>
+      ${arts.map(a => `<tr data-id="${a.id}">
+        <td><strong>${esc(a.title)}</strong><br><span style="color:var(--muted)">${esc(a.body.slice(0, 110))}</span></td>
+        <td>${a.active ? '<span class="pill p-pro">live</span>' : '<span class="pill p-free">off</span>'}
+          ${a.active && !a.embedding_model ? '<br><span style="color:var(--muted);font-size:12px">indexes on next question</span>' : ""}</td>
+        <td class="num" style="color:var(--muted)">${when(a.updated_at)}</td>
+        <td class="rowacts">${can("SUPPORT") ? `<button class="link" data-edit>Edit</button>` : ""}${admin ? `<button class="btn danger" data-del>Delete</button>` : ""}</td>
+      </tr>`).join("") || `<tr><td colspan="4" class="empty">No articles yet</td></tr>`}
+      </tbody></table></div></div>`;
+
+    const modal = (html, onSave) => {
+      const bg = document.createElement("div"); bg.className = "modal-bg";
+      bg.innerHTML = `<div class="modal">${html}<div class="foot"><button class="btn ghost" data-cancel>Cancel</button><button class="btn" data-save>Save</button></div></div>`;
+      document.body.appendChild(bg);
+      const close = () => bg.remove();
+      bg.addEventListener("click", e => { if (e.target === bg) close(); });
+      bg.querySelector("[data-cancel]").addEventListener("click", close);
+      bg.querySelector("[data-save]").addEventListener("click", async () => {
+        const s = bg.querySelector("[data-save]"); s.disabled = true; s.textContent = "Saving…";
+        try { await onSave(bg); close(); show("knowledge"); }
+        catch (e) { alert("Couldn't save: " + e.message); s.disabled = false; s.textContent = "Save"; }
+      });
+    };
+
+    const editArticle = a => modal(`<h3>${a ? "Edit" : "New"} article</h3>
+      <div class="fld"><label>Question or title</label><input class="search" id="at" style="width:100%" maxlength="200" value="${esc(a?.title || "")}"></div>
+      <div class="fld"><label>Answer — facts and steps the assistant may use</label><textarea class="search" id="ab" style="width:100%;min-height:180px" maxlength="8000">${esc(a?.body || "")}</textarea></div>
+      <label style="display:flex;gap:8px;align-items:center;text-transform:none;letter-spacing:0;font-size:13px"><input type="checkbox" id="aa" ${a?.active === false ? "" : "checked"}> Live (the assistant can use it)</label>`,
+      bg => {
+        const title = bg.querySelector("#at").value.trim(), body = bg.querySelector("#ab").value.trim();
+        if (!title || !body) throw new Error("Title and answer are both required");
+        return adminFn({ action: "support_article_upsert", id: a?.id, app_id: app.id, title, body, active: bg.querySelector("#aa").checked });
+      });
+
+    $("#addArt")?.addEventListener("click", () => editArticle(null));
+    document.querySelectorAll("[data-edit]").forEach(b => b.addEventListener("click", () =>
+      editArticle(arts.find(a => a.id === b.closest("tr").dataset.id))));
+    document.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", async () => {
+      if (!confirm("Delete this article? The assistant will stop using it.")) return;
+      b.disabled = true;
+      try { await adminFn({ action: "support_article_delete", id: b.closest("tr").dataset.id }); show("knowledge"); }
+      catch (e) { alert("Couldn't delete: " + e.message); b.disabled = false; }
+    }));
+    $("#editApp")?.addEventListener("click", () => modal(`<h3>Assistant behaviour</h3>
+      <div class="fld"><label>Instructions — who it is, what the app does, tone, rules</label><textarea class="search" id="ai" style="width:100%;min-height:240px">${esc(app.instructions)}</textarea></div>
+      <div class="fld"><label>Message when handing over to the team</label><input class="search" id="ah" style="width:100%" maxlength="500" value="${esc(app.handoff_message)}"></div>
+      <div class="fld"><label>Model on the VPS</label><input class="search" id="am" style="width:100%" value="${esc(app.chat_model)}"></div>
+      <label style="display:flex;gap:8px;align-items:center;text-transform:none;letter-spacing:0;font-size:13px"><input type="checkbox" id="ae" ${app.enabled ? "checked" : ""}> Assistant on (off sends every message straight to the team)</label>`,
+      bg => adminFn({ action: "support_app_update", id: app.id,
+        instructions: bg.querySelector("#ai").value, handoff_message: bg.querySelector("#ah").value,
+        chat_model: bg.querySelector("#am").value.trim(), enabled: bg.querySelector("#ae").checked })));
   },
 
   async catalog() {

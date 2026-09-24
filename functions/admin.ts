@@ -15,6 +15,8 @@ import { createClient } from 'npm:@insforge/sdk';
  *   Moderation: hide_content {post|comment|review}, delete_content, delete_post, delete_report
  *   Catalog:    catalog_upsert, catalog_delete, catalog_set_flags
  *   Groups:     group_upsert, group_delete
+ *   Support:    support_reply, support_set_status, support_article_upsert, support_article_delete,
+ *               support_app_update
  */
 
 // Defence in depth: this function is already bearer-authed and admin-gated, but there's no
@@ -43,6 +45,8 @@ const PERMISSIONS: Record<string, string> = {
   group_upsert: 'ADMIN', group_delete: 'ADMIN', delete_user: 'ADMIN',
   set_admin: 'ADMIN', set_role: 'SUPER_ADMIN',
   config_upsert: 'ADMIN', config_rollback: 'ADMIN', maintenance_set: 'ADMIN', broadcast_create: 'ADMIN',
+  support_reply: 'SUPPORT', support_set_status: 'SUPPORT', support_article_upsert: 'SUPPORT',
+  support_article_delete: 'ADMIN', support_app_update: 'ADMIN',
 };
 // Every id is interpolated into a PostgREST URL; reject anything that isn't a plain UUID so a
 // crafted value can't smuggle extra query filters.
@@ -434,6 +438,84 @@ export default async function (req: Request) {
     const res = await rest('broadcasts', { method: 'POST', body: JSON.stringify([row]) });
     if (!res.ok) { console.error('broadcast_create', res.status, await res.text()); return json({ error: 'save_failed' }, 502); }
     await audit('broadcast_create', 'broadcast', null, { title, kind: row.kind });
+    return json({ ok: true });
+  }
+
+  // ======================= SUPPORT =======================
+
+  if (action === 'support_reply') {
+    const id = body.conversationId;
+    const text = typeof body.text === 'string' ? body.text.trim().slice(0, 4000) : '';
+    if (!isUUID(id) || !text) return json({ error: 'bad_request' }, 400);
+    const conv = await getOne('support_conversations', `id=eq.${id}&select=id,status`);
+    if (!conv) return json({ error: 'not_found' }, 404);
+    const at = new Date().toISOString();
+    const res = await rest('support_messages', {
+      method: 'POST',
+      body: JSON.stringify([{ conversation_id: id, sender: 'agent', author_id: callerId, author_name: actorName || 'goodiesSnap team', body: text, created_at: at }]),
+    });
+    if (!res.ok) { console.error('support_reply', res.status, await res.text()); return json({ error: 'save_failed' }, 502); }
+    // A person answered: the assistant stays quiet in this conversation until it's handed back.
+    await rest(`support_conversations?id=eq.${id}`, {
+      method: 'PATCH', body: JSON.stringify({ status: 'human', assigned_to: callerId, last_message_at: at }),
+    });
+    await audit('support_reply', 'support_conversation', id, { length: text.length });
+    return json({ ok: true });
+  }
+
+  if (action === 'support_set_status') {
+    const id = body.conversationId;
+    const status = String(body.status || '');
+    // 'ai' hands the conversation back to the assistant; 'closed' resolves it.
+    if (!isUUID(id) || !['ai', 'needs_human', 'closed'].includes(status)) return json({ error: 'bad_request' }, 400);
+    const res = await rest(`support_conversations?id=eq.${id}`, {
+      method: 'PATCH', body: JSON.stringify({ status, ...(status === 'ai' ? { handoff_reason: null } : {}) }),
+    });
+    if (!res.ok) return json({ error: 'update_failed' }, 502);
+    await audit('support_set_status', 'support_conversation', id, { status });
+    return json({ ok: true });
+  }
+
+  if (action === 'support_article_upsert') {
+    const appId = String(body.app_id || '');
+    const title = typeof body.title === 'string' ? body.title.trim() : '';
+    const text = typeof body.body === 'string' ? body.body.trim() : '';
+    if (!/^[a-z0-9-]{2,32}$/.test(appId) || !title || title.length > 200 || !text || text.length > 8000) {
+      return json({ error: 'bad_request' }, 400);
+    }
+    const row = { app_id: appId, title, body: text, active: body.active !== false, updated_by: callerId };
+    // Editing title/body clears the stored embedding (DB trigger); the support function
+    // re-embeds it on the next customer question.
+    const res = body.id !== undefined && body.id !== null && body.id !== ''
+      ? (isUUID(body.id)
+        ? await rest(`support_articles?id=eq.${body.id}`, { method: 'PATCH', body: JSON.stringify(row) })
+        : null)
+      : await rest('support_articles', { method: 'POST', body: JSON.stringify([row]) });
+    if (!res) return json({ error: 'bad_id' }, 400);
+    if (!res.ok) { console.error('support_article_upsert', res.status, await res.text()); return json({ error: 'save_failed' }, 502); }
+    await audit('support_article_upsert', 'support_article', isUUID(body.id) ? body.id : null, { app_id: appId, title });
+    return json({ ok: true });
+  }
+
+  if (action === 'support_article_delete') {
+    if (!isUUID(body.id)) return json({ error: 'bad_id' }, 400);
+    const res = await rest(`support_articles?id=eq.${body.id}`, { method: 'DELETE' });
+    if (!res.ok) return json({ error: 'delete_failed' }, 502);
+    await audit('support_article_delete', 'support_article', String(body.id), {});
+    return json({ ok: true });
+  }
+
+  if (action === 'support_app_update') {
+    const appId = String(body.id || '');
+    if (!/^[a-z0-9-]{2,32}$/.test(appId)) return json({ error: 'bad_request' }, 400);
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (typeof body.instructions === 'string') patch.instructions = body.instructions.slice(0, 20000);
+    if (typeof body.handoff_message === 'string' && body.handoff_message.trim()) patch.handoff_message = body.handoff_message.trim().slice(0, 500);
+    if (typeof body.chat_model === 'string' && /^[\w.:\/-]{1,80}$/.test(body.chat_model)) patch.chat_model = body.chat_model;
+    if (typeof body.enabled === 'boolean') patch.enabled = body.enabled;
+    const res = await rest(`support_apps?id=eq.${appId}`, { method: 'PATCH', body: JSON.stringify(patch) });
+    if (!res.ok) { console.error('support_app_update', res.status, await res.text()); return json({ error: 'update_failed' }, 502); }
+    await audit('support_app_update', 'support_app', appId, { fields: Object.keys(patch).filter((k) => k !== 'updated_at') });
     return json({ ok: true });
   }
 
