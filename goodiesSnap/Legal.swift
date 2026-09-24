@@ -9,5 +9,5 @@ enum Legal {
     static let site = URL(string: "https://j7pth4qn.insforge.site")!
     static let terms = URL(string: "https://j7pth4qn.insforge.site/terms.html")!
     static let privacy = URL(string: "https://j7pth4qn.insforge.site/privacy.html")!
-    static let support = URL(string: "mailto:contact@goodiessnap.com")!
+    static let support = URL(string: "mailto:support@goodiessnap.com")!
 }
