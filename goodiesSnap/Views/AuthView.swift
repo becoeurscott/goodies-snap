@@ -72,7 +72,8 @@ struct AuthView: View {
             if !didPreselect {
                 didPreselect = true
                 if store.isSettingUpAccount
-                    || (store.authReason != .general && store.authReason != .community) {
+                    || (store.authReason != .general && store.authReason != .community
+                        && store.authReason != .support) {
                     mode = .signUp
                 }
             }

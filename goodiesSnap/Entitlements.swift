@@ -216,6 +216,7 @@ enum AuthReason: Equatable {
     case scan
     case community
     case upgrade
+    case support
 
     var title: String {
         switch self {
@@ -224,6 +225,7 @@ enum AuthReason: Equatable {
         case .scan:      return "Create an account to scan dishes"
         case .community: return "Join the community"
         case .upgrade:   return "Create an account to subscribe"
+        case .support:   return "Sign in to chat with us"
         }
     }
 
@@ -239,6 +241,8 @@ enum AuthReason: Equatable {
             return "Share dishes, ask questions, cook with other people."
         case .upgrade:
             return "A plan belongs to your account, not this phone — so it follows you to a new device and survives a reinstall."
+        case .support:
+            return "Your conversation is tied to your account, so our team can see your plan and reply to you right here."
         }
     }
 }

@@ -82,7 +82,7 @@ struct SupportView: View {
                 .padding(.top, 14)
 
                 Button {
-                    withAnimation(AppStore.navAnimation) { showChat = true }
+                    openChat()
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: "bubble.left.fill")
@@ -112,7 +112,7 @@ struct SupportView: View {
 
     private func topicCard(_ topic: Topic) -> some View {
         Button {
-            withAnimation(AppStore.navAnimation) { showChat = true }
+            openChat()
         } label: {
             HStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -181,17 +181,28 @@ struct SupportView: View {
 
     // MARK: - Chat
 
-    private struct ChatMessage: Identifiable {
-        let id = UUID()
-        let text: String
-        let isBot: Bool
-        let time: String
+    @State private var chatText = ""
+    @State private var thread: [SupportAPI.Message] = []
+    @State private var status = "ai"
+    @State private var loading = false
+    @State private var waitingForReply = false
+    @State private var sendFailed = false
+
+    private func openChat() {
+        guard store.isAuthenticated else {
+            store.showAuth(.support)
+            return
+        }
+        withAnimation(AppStore.navAnimation) { showChat = true }
     }
 
-    @State private var chatText = ""
-    @State private var messages: [ChatMessage] = [
-        ChatMessage(text: "Hello! 👋 I'm here to help with goodiesSnap. Send me a message to start chatting.", isBot: true, time: "now")
-    ]
+    private var statusLine: (text: String, color: Color) {
+        switch status {
+        case "needs_human": return ("Waiting for our team", .orange)
+        case "human": return ("Chatting with our team", .green)
+        default: return ("AI assistant · our team can step in", .green)
+        }
+    }
 
     private var chatView: some View {
         VStack(spacing: 0) {
@@ -213,8 +224,8 @@ struct SupportView: View {
                     Text("Chat support")
                         .font(nunito(16, .extrabold))
                     HStack(spacing: 5) {
-                        Circle().fill(Color.green).frame(width: 7, height: 7)
-                        Text("Online")
+                        Circle().fill(statusLine.color).frame(width: 7, height: 7)
+                        Text(statusLine.text)
                             .font(nunito(11, .semibold))
                             .foregroundStyle(Color.fg(0.5))
                     }
@@ -231,19 +242,35 @@ struct SupportView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 12) {
-                        ForEach(messages) { msg in
+                        welcomeBubble
+                        ForEach(thread) { msg in
                             chatBubble(msg)
                                 .id(msg.id)
+                        }
+                        if waitingForReply {
+                            typingBubble.id("typing")
+                        }
+                        if loading && thread.isEmpty {
+                            ProgressView().padding(.top, 20)
+                        }
+                        if status == "needs_human" {
+                            banner("A person from our team will reply here. You can close the app — the answer will be waiting.")
+                        } else if status == "closed" {
+                            banner("This conversation is closed. Send a message to start a new one.")
                         }
                     }
                     .padding(.horizontal, 22)
                     .padding(.vertical, 16)
                 }
-                .onChange(of: messages.count) { _, _ in
-                    if let last = messages.last {
-                        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
-                    }
-                }
+                .onChange(of: thread.count) { _, _ in scrollToEnd(proxy) }
+                .onChange(of: waitingForReply) { _, _ in scrollToEnd(proxy) }
+            }
+
+            if sendFailed {
+                Text("Couldn't send. Check your connection and try again.")
+                    .font(nunito(12, .semibold))
+                    .foregroundStyle(Color.red.opacity(0.85))
+                    .padding(.top, 8)
             }
 
             // Input bar
@@ -265,10 +292,10 @@ struct SupportView: View {
                 } label: {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.system(size: 32, weight: .medium))
-                        .foregroundStyle(chatText.trimmingCharacters(in: .whitespaces).isEmpty ? Color.fg(0.2) : Color.gsPeach)
+                        .foregroundStyle(canSend ? Color.gsPeach : Color.fg(0.2))
                 }
                 .buttonStyle(.plain)
-                .disabled(chatText.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(!canSend)
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 12)
@@ -276,78 +303,183 @@ struct SupportView: View {
                 Rectangle().fill(Color.fg(0.08)).frame(height: 1)
             }
         }
+        .task { await loadThread() }
+        // While the team owns the conversation, look for their reply every few seconds.
+        // `.task(id:)` cancels the loop when the status changes or the chat closes.
+        .task(id: status) {
+            guard status == "needs_human" || status == "human" else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(6))
+                guard !Task.isCancelled else { return }
+                await pollNewMessages()
+            }
+        }
     }
 
-    private func chatBubble(_ msg: ChatMessage) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            if msg.isBot {
-                Image(systemName: "bubble.left.fill")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 30, height: 30)
-                    .background(Color.gsPeach)
-                    .clipShape(Circle())
-            }
+    private var canSend: Bool {
+        !waitingForReply && !chatText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
-            VStack(alignment: msg.isBot ? .leading : .trailing, spacing: 4) {
-                Text(msg.text)
+    private func scrollToEnd(_ proxy: ScrollViewProxy) {
+        withAnimation {
+            if waitingForReply {
+                proxy.scrollTo("typing", anchor: .bottom)
+            } else if let last = thread.last {
+                proxy.scrollTo(last.id, anchor: .bottom)
+            }
+        }
+    }
+
+    private var welcomeBubble: some View {
+        botRow(label: nil) {
+            Text("Hello! 👋 I'm the goodiesSnap assistant. Ask me anything about the app, your plan or your recipes — and if you'd rather talk to a person, just say so.")
+        }
+    }
+
+    private var typingBubble: some View {
+        botRow(label: nil) {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Typing…").foregroundStyle(Color.fg(0.5))
+            }
+        }
+    }
+
+    private func banner(_ text: String) -> some View {
+        Text(text)
+            .font(nunito(12, .semibold))
+            .foregroundStyle(Color.fg(0.55))
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .background(Color.fg(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.top, 4)
+    }
+
+    private func botRow<Content: View>(label: String?, @ViewBuilder content: () -> Content) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: label == nil ? "sparkles" : "person.fill")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(label == nil ? Color.gsPeach : Color.gsDock)
+                .clipShape(Circle())
+            VStack(alignment: .leading, spacing: 4) {
+                if let label {
+                    Text(label)
+                        .font(nunito(10.5, .extrabold))
+                        .foregroundStyle(Color.fg(0.5))
+                }
+                content()
                     .font(nunito(13.5, .semibold))
-                    .foregroundStyle(msg.isBot ? Color.gsFg : .white)
+                    .foregroundStyle(Color.gsFg)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(msg.isBot ? Color.fg(0.06) : Color.gsDock)
+                    .background(Color.fg(0.06))
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+            .frame(maxWidth: 280, alignment: .leading)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
 
-                Text(msg.time)
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "h:mm a"
+        return f
+    }()
+
+    @ViewBuilder
+    private func chatBubble(_ msg: SupportAPI.Message) -> some View {
+        let time = msg.date.map { Self.timeFormatter.string(from: $0) } ?? ""
+        if msg.isMine {
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(msg.body)
+                    .font(nunito(13.5, .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(Color.gsDock)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                Text(time)
                     .font(nunito(10, .semibold))
                     .foregroundStyle(Color.fg(0.35))
             }
-            .frame(maxWidth: 280, alignment: msg.isBot ? .leading : .trailing)
-
-            if !msg.isBot {
-                Spacer(minLength: 0)
+            .frame(maxWidth: 280, alignment: .trailing)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                botRow(label: msg.sender == "agent" ? "\(msg.authorName ?? "goodiesSnap team") · goodiesSnap team" : nil) {
+                    Text(msg.body)
+                }
+                Text(time)
+                    .font(nunito(10, .semibold))
+                    .foregroundStyle(Color.fg(0.35))
+                    .padding(.leading, 40)
             }
         }
-        .frame(maxWidth: .infinity, alignment: msg.isBot ? .leading : .trailing)
+    }
+
+    /// Runs a support call with the current token, renewing it once if it has expired.
+    private func withToken(_ op: (String) async throws -> SupportAPI.Thread) async throws -> SupportAPI.Thread {
+        guard let token = store.aiToken else { throw SupportAPI.SupportError.notSignedIn }
+        do {
+            return try await op(token)
+        } catch SupportAPI.SupportError.notSignedIn {
+            guard let fresh = await store.refreshAIToken?() else { throw SupportAPI.SupportError.notSignedIn }
+            store.aiToken = fresh
+            return try await op(fresh)
+        }
+    }
+
+    private func loadThread() async {
+        loading = true
+        defer { loading = false }
+        guard let result = try? await withToken({ try await SupportAPI.history(token: $0) }) else { return }
+        thread = result.messages
+        status = result.conversation?.status ?? "ai"
+    }
+
+    private func pollNewMessages() async {
+        guard let result = try? await withToken({ try await SupportAPI.history(after: thread.last?.createdAt, token: $0) }) else { return }
+        merge(result.messages)
+        if let s = result.conversation?.status { status = s }
+    }
+
+    /// Adds messages not already shown; the server can resend the newest one.
+    private func merge(_ incoming: [SupportAPI.Message]) {
+        let known = Set(thread.map(\.id))
+        let fresh = incoming.filter { !known.contains($0.id) }
+        if !fresh.isEmpty { thread.append(contentsOf: fresh) }
     }
 
     private func sendMessage() {
-        let text = chatText.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return }
-
-        let formatter = DateFormatter()
-        formatter.dateFormat = "h:mm a"
-        let time = formatter.string(from: Date())
-
-        messages.append(ChatMessage(text: text, isBot: false, time: time))
+        let text = chatText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !waitingForReply else { return }
         chatText = ""
+        sendFailed = false
         Haptics.tap(.light)
+        // Only show "typing" when the assistant is the one who'll answer.
+        waitingForReply = true
 
         Task {
-            try? await Task.sleep(for: .seconds(1.2))
-            let reply = autoReply(for: text)
-            messages.append(ChatMessage(text: reply, isBot: true, time: formatter.string(from: Date())))
+            defer { waitingForReply = false }
+            do {
+                let result = try await withToken { try await SupportAPI.send(text, token: $0) }
+                if status == "closed" { thread = [] }
+                merge(result.messages)
+                if let s = result.conversation?.status { status = s }
+            } catch SupportAPI.SupportError.notSignedIn {
+                chatText = text
+                store.showAuth(.support)
+            } catch {
+                chatText = text
+                sendFailed = true
+            }
         }
-    }
-
-    private func autoReply(for question: String) -> String {
-        let q = question.lowercased()
-        if q.contains("cancel") || q.contains("subscription") {
-            return "To manage or cancel your subscription, go to Settings → your name → Subscriptions → goodiesSnap on your iPhone. Your saved recipes stay yours on any plan."
-        }
-        if q.contains("delete") || q.contains("account") {
-            return "You can delete your account from Profile → Privacy & legal → Delete my account. This is permanent and removes your posts and comments, but recipes on your device stay."
-        }
-        if q.contains("save") || q.contains("recipe") || q.contains("import") {
-            return "Tap the + button on the Home screen to save a recipe. You can paste a web link, YouTube URL, type text, or snap a photo — the AI creates a clean recipe card for you."
-        }
-        if q.contains("plan") || q.contains("meal") || q.contains("shopping") {
-            return "Open the Plan tab to drop recipes onto your week. Once planned, the shopping list builds itself, sorted by aisle. Head to the Shopping tab to check items off."
-        }
-        if q.contains("ai") || q.contains("action") || q.contains("limit") {
-            return "AI actions are used each time goodiesSnap reads a link, photo or text to create a recipe. Free: 5/month, Plus: 100/month, Pro: 400/month. Upgrade in Profile → Upgrade to Pro."
-        }
-        return "Thanks for reaching out! For detailed help, email us at support@goodiessnap.app and we'll get back to you shortly. 💛"
     }
 
     // MARK: - Shared header
