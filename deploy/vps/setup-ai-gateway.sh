@@ -46,12 +46,12 @@ esac
 # First run: goodiessnap is the first app.
 [ -f "$KEY_DIR/goodiessnap" ] || mint_key goodiessnap
 
-echo "==> Tuning Ollama (loopback only, model kept warm, 2 chats at once)"
+echo "==> Tuning Ollama (loopback only, model always loaded, 2 chats at once)"
 mkdir -p /etc/systemd/system/ollama.service.d
 cat > /etc/systemd/system/ollama.service.d/goodiessnap.conf <<'EOF'
 [Service]
 Environment="OLLAMA_HOST=127.0.0.1:11434"
-Environment="OLLAMA_KEEP_ALIVE=24h"
+Environment="OLLAMA_KEEP_ALIVE=-1"
 Environment="OLLAMA_NUM_PARALLEL=2"
 Environment="OLLAMA_MAX_LOADED_MODELS=2"
 Environment="OLLAMA_MAX_QUEUE=16"

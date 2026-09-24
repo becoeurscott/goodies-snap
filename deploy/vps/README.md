@@ -14,7 +14,7 @@ app backend (InsForge function) --HTTPS + app key--> Caddy :443 --> Ollama 127.0
   Model management (`/api/pull`, `/api/delete`, …) → `404`.
 - Keys are stripped from the access log (`/var/log/caddy/ai-access.log`).
 - Models: `qwen2.5:3b` for chat, `nomic-embed-text` for knowledge search. Ollama keeps them
-  loaded for 24h and serves 2 chats in parallel (2 vCPU, no GPU).
+  loaded permanently and serves 2 chats in parallel (2 vCPU, no GPU).
 
 ## Run
 

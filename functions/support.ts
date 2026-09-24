@@ -250,7 +250,7 @@ export default async function (req: Request): Promise<Response> {
     const res = await fetch(`${ollamaURL}/api/embed`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${ollamaKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, input: inputs, keep_alive: '24h' }),
+      body: JSON.stringify({ model, input: inputs, keep_alive: -1 }),
       signal: AbortSignal.timeout(20_000),
     });
     if (!res.ok) throw new Error(`embed ${res.status}`);
@@ -270,7 +270,7 @@ export default async function (req: Request): Promise<Response> {
           method: 'POST',
           headers: { Authorization: `Bearer ${ollamaKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model, messages, stream: false, format: REPLY_SCHEMA, keep_alive: '24h',
+            model, messages, stream: false, format: REPLY_SCHEMA, keep_alive: -1,
             options: { temperature: 0.3, num_ctx: 4096, num_predict: 400 },
           }),
           signal: AbortSignal.timeout(timeout),
