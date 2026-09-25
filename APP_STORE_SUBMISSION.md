@@ -123,7 +123,7 @@ Without these, core features 503 during review → functional-bug rejection (2.1
 - ⬜ **Description, keywords, subtitle, promo text, category** (Food & Drink).
 - ⬜ **Age rating: 17+** (UGC + unrestricted web/community). Answer the questionnaire honestly.
 - ⬜ **App Review notes**: explain AI capture, community moderation, how to reach paywall, and
-  provide a **demo account** (test: `testcook1@example.com` / `Passw0rd!123`) + note that
+  provide a **demo account** (credentials in the local, untracked `fastlane/metadata/review_information/` — never commit them) + note that
   IAP is server-verified.
 - ⬜ **Export compliance**: declare non-exempt encryption = false (matches Info.plist).
 

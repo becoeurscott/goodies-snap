@@ -24,6 +24,11 @@ Fill in:
 
 `fastlane/.env` and `fastlane/*.p8` are ignored by git.
 
+App Review contact details and the demo login are also local-only (the repository is
+public). Create these one-line files in `fastlane/metadata/review_information/`:
+`demo_user.txt`, `demo_password.txt`, `first_name.txt`, `last_name.txt`,
+`email_address.txt`, `phone_number.txt`. They are ignored by git; `notes.txt` stays tracked.
+
 ## 3. Install Fastlane
 
 ```sh
