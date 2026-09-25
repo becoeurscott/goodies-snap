@@ -1,0 +1,17 @@
+Goodies Snap is a food and recipe app with AI-powered recipe capture, meal planning, shopping lists, subscriptions, and a moderated community feed.
+
+Suggested review flow:
+1. Sign in with the demo account above, or create a new email/password account.
+2. Open Import to test recipe capture from text, link, or photo.
+3. Open the paywall from a gated AI feature to review Plus and Pro subscription options.
+4. Open Community to view posts, comments, reporting, and blocking controls.
+5. Open Profile > Privacy & legal to review account deletion, Terms, and Privacy links.
+
+Community safety:
+Users must accept the Terms, Privacy Policy, and community rules before creating an account. Posts and comments can be reported, users can be blocked, and account deletion is available in the app.
+
+AI and nutrition note:
+AI recipe and nutrition outputs are estimates. Users are told to verify allergens, ingredients, cooking temperatures, and food safety.
+
+Important submission note:
+Before submitting, confirm that the Privacy Policy URL is live, all four auto-renewable subscription products are ready to submit in App Store Connect, and the AI backend keys are configured so review can test the core recipe features.

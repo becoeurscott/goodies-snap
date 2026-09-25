@@ -51,7 +51,12 @@ enum SocialAPI {
         return user
     }
 
-    static func signInWithGoogle(idToken: String, name: String) async throws -> Session {
+    struct GoogleAuthResult {
+        let session: Session
+        let isNewUser: Bool
+    }
+
+    static func signInWithGoogle(idToken: String, name: String) async throws -> GoogleAuthResult {
         var request = URLRequest(url: URL(string: "https://j7pth4qn.function2.insforge.app/google-auth")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 30
@@ -74,9 +79,40 @@ enum SocialAPI {
         }
         let displayName = (user["name"] as? String) ?? name
         let isNew = json["is_new_user"] as? Bool ?? false
-        var session = Session(accessToken: token, refreshToken: json["refreshToken"] as? String, userID: id, displayName: displayName)
+        let session = Session(accessToken: token, refreshToken: json["refreshToken"] as? String, userID: id, displayName: displayName)
         try await upsertProfile(session: session)
-        return session
+        return GoogleAuthResult(session: session, isNewUser: isNew)
+    }
+
+    /// Sign in with Apple. The client sends Apple's identity token (from
+    /// ASAuthorizationController); the `apple-auth` function verifies it against Apple's keys
+    /// and returns the same session shape as Google. `name` is only present on the very first
+    /// authorization, so it is best-effort.
+    static func signInWithApple(identityToken: String, name: String?) async throws -> GoogleAuthResult {
+        var request = URLRequest(url: URL(string: "https://j7pth4qn.function2.insforge.app/apple-auth")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        var payload: [String: Any] = ["identity_token": identityToken]
+        if let name, !name.isEmpty { payload["name"] = name }
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        guard (response as? HTTPURLResponse)?.statusCode ?? 0 < 300 else {
+            throw SocialError.server(json["error"] as? String ?? "Apple sign-in failed")
+        }
+        guard let token = json["accessToken"] as? String,
+              let user = json["user"] as? [String: Any],
+              let id = user["id"] as? String else {
+            throw SocialError.server("Apple sign-in failed")
+        }
+        let displayName = (user["name"] as? String) ?? name ?? "Cook"
+        let isNew = json["is_new_user"] as? Bool ?? false
+        let session = Session(accessToken: token, refreshToken: json["refreshToken"] as? String, userID: id, displayName: displayName)
+        try await upsertProfile(session: session)
+        return GoogleAuthResult(session: session, isNewUser: isNew)
     }
 
     private static func authRequest(path: String, body: [String: String]) async throws -> Session {
@@ -241,8 +277,20 @@ enum SocialAPI {
         return baseURL.appending(path: "/api/storage/buckets/post-images/objects/\(key)").absoluteString
     }
 
-    static func deletePost(id: String, token: String) async throws {
-        try await send("DELETE", "posts", query: "id=eq.\(id)", token: token)
+    /// Returns true when the server kept the post as a "This message was deleted" placeholder
+    /// (it was the newest message in its channel) rather than removing it.
+    static func deletePost(id: String, token: String) async throws -> Bool {
+        var request = URLRequest(url: baseURL.appending(path: "/api/database/rpc/delete_my_post"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["p_post_id": id])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try check(response, data: data)
+        let result = (try? JSONDecoder().decode(String.self, from: data))
+            ?? String(data: data, encoding: .utf8) ?? ""
+        return result.contains("placeholder")
     }
 
     // MARK: - Reels
@@ -571,6 +619,16 @@ struct FeedPost: Codable, Identifiable, Hashable {
     var youtube_id: String? = nil
     var thumb_url: String? = nil
     var duration_seconds: Int? = nil
+    var deleted_at: String? = nil
+
+    var isDeleted: Bool { deleted_at != nil }
+
+    var asDeletedPlaceholder: FeedPost {
+        FeedPost(id: id, author_id: author_id, author_name: author_name, caption: "",
+                 recipe: nil, image_url: nil, kind: kind, group_id: group_id,
+                 like_count: 0, comment_count: 0, created_at: created_at,
+                 deleted_at: ISO8601DateFormatter().string(from: .now))
+    }
 
     var imageURL: URL? { URL(string: image_url ?? recipe?.img ?? "") }
     var isQuestion: Bool { kind == "question" }

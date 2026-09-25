@@ -71,6 +71,14 @@ final class SocialStore: ObservableObject {
     }
 
     private static let sessionKey = "gs_social_session"
+    private static let guestKey = "gs_session_is_guest"
+
+    /// True while the live session belongs to a guest account opened for onboarding rather
+    /// than to a person. Kept out of `SocialAPI.Session` so the persisted shape is unchanged
+    /// and older saved sessions still decode.
+    @Published private(set) var isGuest: Bool = UserDefaults.standard.bool(forKey: SocialStore.guestKey) {
+        didSet { UserDefaults.standard.set(isGuest, forKey: SocialStore.guestKey) }
+    }
 
     init() {
         if let data = UserDefaults.standard.data(forKey: Self.sessionKey),
@@ -90,7 +98,34 @@ final class SocialStore: ObservableObject {
         }
     }
 
-    var signedIn: Bool { session != nil }
+    /// Whether a *person* is signed in. A guest session deliberately reads as signed out:
+    /// it must not open Profile, post to the feed, or satisfy the account wall — its only
+    /// job is to carry a token so onboarding's AI calls can run.
+    var signedIn: Bool { session != nil && !isGuest }
+
+    /// Whether there is any usable token at all, guest included.
+    var hasSession: Bool { session != nil }
+
+    // MARK: - Guest sessions
+
+    /// Opens an anonymous session for onboarding, if there isn't a session already.
+    /// Silent on failure: onboarding falls back to its scripted path rather than showing the
+    /// user a networking error on the first screen they ever see.
+    @discardableResult
+    func startGuestSessionIfNeeded() async -> Bool {
+        guard session == nil else { return isGuest }
+        guard let guest = try? await GuestSession.start() else { return false }
+        isGuest = true
+        session = guest
+        return true
+    }
+
+    /// Hands the guest's work over to a real account. Called after a successful sign-up:
+    /// the local app state is already on the device and gets pushed to the new account by
+    /// `AppStore.persist()`, so all the guest still owns is a row worth deleting.
+    private func retireGuest(_ guest: SocialAPI.Session) {
+        Task { await GuestSession.retire(session: guest) }
+    }
 
     // MARK: - Auth
 
@@ -103,15 +138,60 @@ final class SocialStore: ObservableObject {
     }
 
     func signInWithGoogle(idToken: String, name: String) async {
-        await authFlow(isSignUp: true) { try await SocialAPI.signInWithGoogle(idToken: idToken, name: name) }
+        busy = true
+        errorMessage = ""
+        let outgoingGuest = isGuest ? session : nil
+        do {
+            let result = try await SocialAPI.signInWithGoogle(idToken: idToken, name: name)
+            withAnimation(AppStore.sheetAnimation) {
+                isGuest = false
+                session = result.session
+            }
+            if let outgoingGuest { retireGuest(outgoingGuest) }
+            Haptics.notify(.success)
+            onSignedIn?(result.isNewUser)
+            await refresh()
+        } catch {
+            errorMessage = error.localizedDescription
+            Haptics.notify(.error)
+        }
+        busy = false
+    }
+
+    func signInWithApple(identityToken: String, name: String?) async {
+        busy = true
+        errorMessage = ""
+        let outgoingGuest = isGuest ? session : nil
+        do {
+            let result = try await SocialAPI.signInWithApple(identityToken: identityToken, name: name)
+            withAnimation(AppStore.sheetAnimation) {
+                isGuest = false
+                session = result.session
+            }
+            if let outgoingGuest { retireGuest(outgoingGuest) }
+            Haptics.notify(.success)
+            onSignedIn?(result.isNewUser)
+            await refresh()
+        } catch {
+            errorMessage = error.localizedDescription
+            Haptics.notify(.error)
+        }
+        busy = false
     }
 
     private func authFlow(isSignUp: Bool, _ work: () async throws -> SocialAPI.Session) async {
         busy = true
         errorMessage = ""
+        // Captured before the swap: once `session` points at the real account there is no
+        // way back to the guest's token, and retiring it needs that token.
+        let outgoingGuest = isGuest ? session : nil
         do {
             let s = try await work()
-            withAnimation(AppStore.sheetAnimation) { session = s }
+            withAnimation(AppStore.sheetAnimation) {
+                isGuest = false
+                session = s
+            }
+            if let outgoingGuest { retireGuest(outgoingGuest) }
             Haptics.notify(.success)
             // Fire the redirect immediately and deterministically, before the (slower)
             // feed refresh — the user shouldn't wait on posts loading to leave this screen.
@@ -161,6 +241,7 @@ final class SocialStore: ObservableObject {
 
     func signOut() {
         withAnimation(AppStore.lateralAnimation) {
+            isGuest = false
             session = nil
             posts = []
             likedPostIDs = []
@@ -543,10 +624,27 @@ final class SocialStore: ObservableObject {
 
     func deletePost(_ post: FeedPost) {
         guard let session, post.author_id == session.userID else { return }
-        withAnimation(AppStore.pushAnimation) { posts.removeAll { $0.id == post.id } }
+        // Mirrors delete_my_post on the server so the UI updates before the round trip.
+        let newestInChannel = !post.isDeleted && !post.isReel && !posts.contains {
+            $0.id != post.id && $0.group_id == post.group_id && !$0.isReel && !$0.isDeleted
+                && $0.created_at > post.created_at
+        }
+        applyDeletion(of: post, keepPlaceholder: newestInChannel)
         Task {
-            do { try await authed { s in try await SocialAPI.deletePost(id: post.id, token: s.accessToken) } }
-            catch { handle(error); await refresh() }
+            do {
+                let kept = try await authed { s in try await SocialAPI.deletePost(id: post.id, token: s.accessToken) }
+                if kept != newestInChannel { await refresh() }
+            } catch { handle(error); await refresh() }
+        }
+    }
+
+    private func applyDeletion(of post: FeedPost, keepPlaceholder: Bool) {
+        withAnimation(AppStore.pushAnimation) {
+            if keepPlaceholder, let i = posts.firstIndex(where: { $0.id == post.id }) {
+                posts[i] = post.asDeletedPlaceholder
+            } else {
+                posts.removeAll { $0.id == post.id }
+            }
         }
     }
 

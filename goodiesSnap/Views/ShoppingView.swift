@@ -17,7 +17,7 @@ struct ShoppingView: View {
                     storeBar
                         .padding(.top, 18)
 
-                    if let total = store.cartTotalCents {
+                    if let total = store.cartTotal {
                         totalBar(total)
                             .padding(.top, 12)
                     }
@@ -115,7 +115,9 @@ struct ShoppingView: View {
                 Text(store.krogerStoreName ?? "No store set")
                     .font(nunito(13.5, .extrabold))
                     .lineLimit(1)
-                Text(store.krogerStoreName == nil ? "Set a store to see prices" : "Prices from this store")
+                // Not "set a store to see prices" any more — the list is already priced from
+                // the offline table. What a store buys you is real prices, so say that.
+                Text(store.krogerStoreName == nil ? "Using estimates · connect for real prices" : "Prices from this store")
                     .font(nunito(10.5, .semibold))
                     .foregroundStyle(Color.gsMuted)
             }
@@ -149,10 +151,21 @@ struct ShoppingView: View {
         }
     }
 
-    /// Running total of every priced item on the list, at the chosen store.
-    private func totalBar(_ cents: Int) -> some View {
+    /// Says where the number came from, and how much of the list it covers.
+    private func subtitle(total: AppStore.ItemPrice, priced: Int, all: Int, owned: Int) -> String {
+        let ownedNote = owned > 0 ? " · \(owned) you already have" : ""
+        if total.isEstimate {
+            return "Average grocery prices (\(IngredientPrices.asOf))" + ownedNote
+        }
+        return (priced == all ? "All \(all) items priced" : "\(priced) of \(all) items priced") + ownedNote
+    }
+
+    /// Running total for the list. Real store prices when a store is connected, otherwise
+    /// the offline estimate — which has to say so, in the same words onboarding used.
+    private func totalBar(_ total: AppStore.ItemPrice) -> some View {
         let priced = store.pricedItemCount
-        let all = store.shopping.count
+        let all = store.shopping.filter { !$0.alreadyHave }.count
+        let owned = store.shopping.filter(\.alreadyHave).count
         return HStack(spacing: 12) {
             Image(systemName: "cart.fill")
                 .font(.system(size: 15, weight: .bold))
@@ -161,14 +174,14 @@ struct ShoppingView: View {
                 .background(Color.gsPeachSoft)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             VStack(alignment: .leading, spacing: 1) {
-                Text("Estimated total")
+                Text(total.isEstimate ? "Estimated total" : "Total at \(store.krogerStoreName ?? "your store")")
                     .font(nunito(13.5, .extrabold))
-                Text(priced == all ? "All \(all) items priced" : "\(priced) of \(all) items priced")
+                Text(subtitle(total: total, priced: priced, all: all, owned: owned))
                     .font(nunito(10.5, .semibold))
                     .foregroundStyle(Color.gsMuted)
             }
             Spacer()
-            Text(store.formatPrice(cents))
+            Text(store.formatPrice(total.cents))
                 .font(nunito(22, .black))
                 .foregroundStyle(Color.gsAccentInk)
         }
@@ -313,10 +326,13 @@ struct ShoppingRow: View {
                     .strikethrough(item.done)
                     .foregroundStyle(item.done ? Color.fg(0.35) : Color.gsFg)
                 Spacer()
-                if let cents = item.priceCents {
-                    Text(store.formatPrice(cents))
+                if let price = store.price(for: item) {
+                    Text(store.formatPrice(price.cents))
                         .font(nunito(12.5, .black))
-                        .foregroundStyle(item.done ? Color.fg(0.35) : Color.gsAccentInk)
+                        .foregroundStyle(item.done || item.alreadyHave
+                                         ? Color.fg(0.35)
+                                         : (price.isEstimate ? Color.gsMuted : Color.gsAccentInk))
+                        .strikethrough(item.alreadyHave, color: Color.gsMuted)
                 } else {
                     Text(item.qty)
                         .font(nunito(12, .bold))
@@ -357,7 +373,7 @@ struct StorePickerSheet: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
                 Button { store.findStores() } label: {
-                    Text("Find").font(nunito(14, .extrabold)).foregroundStyle(.white)
+                    Text("Find").font(nunito(14, .extrabold)).foregroundStyle(Color.gsFg)
                         .frame(width: 84, height: 50)
                 }
                 .buttonStyle(DarkButtonStyle())
@@ -479,9 +495,10 @@ struct BasketCard: View {
                     }
                     Spacer(minLength: 4)
                     VStack(alignment: .trailing, spacing: 4) {
-                        if let cents = store.priceTotalCents(group.items) {
-                            Text(store.formatPrice(cents))
+                        if let price = store.priceTotal(group.items) {
+                            Text(store.formatPrice(price.cents))
                                 .font(nunito(14, .black))
+                                .foregroundStyle(price.isEstimate ? Color.gsFg : Color.gsAccentInk)
                         }
                         Image(systemName: "chevron.right")
                             .font(.system(size: 13, weight: .bold))

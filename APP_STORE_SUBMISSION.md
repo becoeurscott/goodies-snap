@@ -1,11 +1,20 @@
 # goodiesSnap — App Store Submission Guide & Checklist
 
 Bundle ID: `com.goodies.goodiesSnap` · Apple App ID: `6804307648`
-Last audited against code + backend: **2026-09-08**
+Last audited against code + backend: **2026-09-20**
 
 Legend: ✅ done/verified · ⚠️ blocked on you (Claude can't do it) · 🐞 must-fix bug · ⬜ not started
 
 ---
+
+## 2026-09-20 audit addendum
+
+- ✅ Fastlane listing metadata has been added under `fastlane/metadata/en-US/`.
+- ✅ Fastlane review notes have been added under `fastlane/metadata/review_information/`.
+- 🐞 **Do not submit yet:** Google Sign-In is functional, but the Apple sign-in button is still a placeholder in `AuthView.swift`. Apple Guideline 4.8 requires an equivalent privacy-preserving login option when a third-party login service is used for the app's primary account.
+- 🐞 **Do not submit yet:** the deployed legal links used by the app currently return 404 for `/privacy.html` and `/terms.html`, even though the local files exist in `site/`. App Review will reject dead Privacy/Terms URLs under Guidelines 2.1 and 5.1.1.
+- ⚠️ `npx` is not available in this shell, so the InsForge site deploy could not be run from here. Use the InsForge CLI from an environment with Node/npm available, or deploy the `site/` folder another way before submission.
+- ⚠️ A simulator build check was started with DerivedData in `/tmp/goodiessnap-derived`, but Xcode stayed silent for several minutes and was stopped. Re-run build/archive in Xcode or with a verbose `xcodebuild` log before upload.
 
 ## 0. How to read this
 Everything below is either **verified in code/backend** or **explicitly flagged as owed**.
@@ -36,8 +45,8 @@ Key facts App Review will test:
 - ⚠️ **Fill legal placeholders** in Terms/Privacy: legal entity name, registered address,
   governing law, `legal@`/`privacy@` addresses. Drafts need a lawyer's review.
 - ✅ **Support email:** app and pages use `support@goodiessnap.com`, an alias of the
-  `contact@goodiessnap.com` mailbox (`goodiessnap.app` was never registered). App Review
-  emails it — check it.
+  `contact@goodiessnap.com` mailbox (`goodiessnap.app` was never registered); review metadata
+  uses `contact@goodiessnap.com`. App Review emails it — check it.
 - ⬜ In App Store Connect: set **Privacy Policy URL** and **Support URL** to live pages.
 - ⬜ Complete the **App Privacy "nutrition label"** questionnaire — must match
   `PrivacyInfo.xcprivacy` (email, name, user ID, photos, user content; linked; no tracking).

@@ -88,7 +88,7 @@ struct CookModeView: View {
                         Button { store.nextCookStep() } label: {
                             Text(store.cookStep >= steps.count - 1 ? "Finish" : "Next step")
                                 .font(nunito(15, .extrabold))
-                                .foregroundStyle(Color.white)
+                                .foregroundStyle(Color.gsFg)
                                 .frame(maxWidth: .infinity, minHeight: 56)
                         }
                         .buttonStyle(CreamButtonStyle())
@@ -112,7 +112,7 @@ struct CookModeView: View {
                 Button { store.go(to: .home) } label: {
                     Text("Go back")
                         .font(nunito(14, .extrabold))
-                        .foregroundStyle(Color.white)
+                        .foregroundStyle(Color.gsFg)
                         .padding(.horizontal, 24)
                         .frame(minHeight: 48)
                 }

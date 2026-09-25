@@ -155,7 +155,7 @@ struct ImportView: View {
                 } label: {
                     Text("Extract with AI")
                         .font(nunito(14, .extrabold))
-                        .foregroundStyle(Color.white)
+                        .foregroundStyle(Color.gsFg)
                         .padding(.horizontal, 26)
                         .frame(minHeight: 48)
                 }
@@ -543,7 +543,7 @@ struct ScanResultsView: View {
                         Image(systemName: "cart.badge.plus").font(.system(size: 14, weight: .bold))
                         Text("Add all to shopping list").font(nunito(14, .extrabold))
                     }
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(Color.gsFg)
                     .padding(.horizontal, 22)
                     .frame(minHeight: 48)
                 }
@@ -965,7 +965,7 @@ struct FoodDetailSheet: View {
                             Text(onList ? "Already on your list" : "Add to shopping list")
                                 .font(nunito(14, .extrabold))
                         }
-                        .foregroundStyle(Color.white)
+                        .foregroundStyle(Color.gsFg)
                         .frame(maxWidth: .infinity, minHeight: 52)
                     }
                     .buttonStyle(DarkButtonStyle())
@@ -1250,7 +1250,7 @@ struct ImportPreviewSheet: View {
                         Button { store.saveImport() } label: {
                             Text("Save to library")
                                 .font(nunito(14, .extrabold))
-                                .foregroundStyle(Color.white)
+                                .foregroundStyle(Color.gsFg)
                                 .frame(maxWidth: .infinity, minHeight: 52)
                         }
                         .buttonStyle(DarkButtonStyle())

@@ -1,0 +1,19 @@
+Goodies Snap helps you turn food inspiration into recipes you can actually cook.
+
+Capture a dish with your camera, choose a photo, paste a recipe link, import from a video, or start from your own text. Goodies Snap uses AI to identify the food, write a clear recipe, and organize it into a simple card with ingredients, steps, timing, and notes.
+
+Plan meals, build shopping lists, save favorite recipes, and keep your cooking ideas in one place. You can also discover food ideas from the community, share your own dishes, comment, like, report content, and block users when needed.
+
+What you can do:
+
+- Scan a dish from your camera or photo library
+- Save recipes from links, videos, photos, and text
+- Organize recipes into a personal library
+- Cook with clean step-by-step instructions
+- Create meal plans and shopping lists
+- Discover and share food ideas in the community feed
+- Personalize recipe ideas around your taste and cooking style
+
+Goodies Snap includes a free plan with limited AI actions. Optional Plus and Pro subscriptions unlock higher monthly AI allowances and advanced recipe capture features. Subscriptions renew automatically unless canceled at least 24 hours before the end of the current period. You can manage or cancel subscriptions in your Apple Account settings.
+
+AI can make mistakes. Always check ingredients, allergens, cooking temperatures, and food safety before cooking.

@@ -1,0 +1,153 @@
+default_platform(:ios)
+
+# ---------------------------------------------------------------------------
+# goodiesSnap — App Store automation
+#
+# AUTH: uses an App Store Connect API key (no Apple ID password in the repo).
+# Set these before running any lane that talks to App Store Connect
+# (`beta`, `release`, `bump`). Put them in fastlane/.env (git-ignored):
+#
+#   ASC_KEY_ID=XXXXXXXXXX
+#   ASC_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+#   ASC_KEY_PATH=./fastlane/AuthKey_XXXXXXXXXX.p8    # the downloaded .p8
+#
+# Create the key at App Store Connect → Users and Access → Integrations →
+# App Store Connect API. Give it "App Manager" access.
+# ---------------------------------------------------------------------------
+
+APP_IDENTIFIER = "com.goodies.goodiesSnap"
+SCHEME         = "goodiesSnap"
+PROJECT        = "goodiesSnap.xcodeproj"
+OUTPUT_DIR     = "./build"
+IPA_NAME       = "goodiesSnap"
+METADATA_PATH  = "./fastlane/metadata"
+COPYRIGHT      = "2026 Goodies Snap"
+
+platform :ios do
+  # Load the ASC API key from env vars into a fastlane session.
+  def load_asc_key
+    app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_filepath: ENV.fetch("ASC_KEY_PATH"),
+      in_house: false
+    )
+  end
+
+  def require_review_confirmation!
+    unless ENV["CONFIRM_APP_REVIEW_SUBMIT"] == "YES"
+      UI.user_error!("Refusing to submit for review. Set CONFIRM_APP_REVIEW_SUBMIT=YES only after the App Store checklist is green.")
+    end
+  end
+
+  desc "Set the build number to one above the latest TestFlight build"
+  lane :bump do
+    key = load_asc_key
+    latest = latest_testflight_build_number(
+      app_identifier: APP_IDENTIFIER,
+      api_key: key
+    )
+    next_build = latest.to_i + 1
+    increment_build_number(build_number: next_build, xcodeproj: PROJECT)
+    UI.success("Build number set to #{next_build} (latest on TestFlight was #{latest}).")
+  end
+
+  desc "Archive + export a signed Release .ipa (no upload)"
+  lane :build do
+    build_app(
+      project: PROJECT,
+      scheme: SCHEME,
+      configuration: "Release",
+      output_directory: OUTPUT_DIR,
+      output_name: "#{IPA_NAME}.ipa",
+      clean: true,
+      export_method: "app-store"
+    )
+    UI.success("Archived → #{OUTPUT_DIR}/#{IPA_NAME}.ipa")
+  end
+
+  desc "Run Apple's metadata precheck without uploading a build"
+  lane :check_metadata do
+    key = load_asc_key
+    precheck(
+      api_key: key,
+      app_identifier: APP_IDENTIFIER,
+      include_in_app_purchases: false
+    )
+  end
+
+  desc "Upload App Store metadata/review info only (no binary, no submit)"
+  lane :metadata do
+    key = load_asc_key
+    upload_to_app_store(
+      api_key: key,
+      app_identifier: APP_IDENTIFIER,
+      metadata_path: METADATA_PATH,
+      copyright: COPYRIGHT,
+      skip_binary_upload: true,
+      skip_screenshots: true,
+      submit_for_review: false,
+      precheck_include_in_app_purchases: false,
+      force: true
+    )
+    UI.success("Uploaded App Store metadata only.")
+  end
+
+  desc "Bump build, archive, and upload to TestFlight"
+  lane :beta do
+    key = load_asc_key
+    bump
+    build
+    upload_to_testflight(
+      api_key: key,
+      app_identifier: APP_IDENTIFIER,
+      ipa: "#{OUTPUT_DIR}/#{IPA_NAME}.ipa",
+      skip_waiting_for_build_processing: true
+    )
+    UI.success("Uploaded to TestFlight.")
+  end
+
+  desc "Upload binary + metadata to App Store Connect (does NOT auto-submit)"
+  lane :release do
+    key = load_asc_key
+    bump
+    build
+    upload_to_app_store(
+      api_key: key,
+      app_identifier: APP_IDENTIFIER,
+      ipa: "#{OUTPUT_DIR}/#{IPA_NAME}.ipa",
+      metadata_path: METADATA_PATH,
+      copyright: COPYRIGHT,
+      submit_for_review: false,   # flip to true only when the checklist is green
+      automatic_release: false,
+      precheck_include_in_app_purchases: false,
+      force: true                 # skip the interactive HTML preview
+    )
+    UI.success("Uploaded to App Store Connect. Submit for review manually when ready.")
+  end
+
+  desc "Submit the already-uploaded App Store version for review (guarded)"
+  lane :submit_review do
+    require_review_confirmation!
+    key = load_asc_key
+    upload_to_app_store(
+      api_key: key,
+      app_identifier: APP_IDENTIFIER,
+      metadata_path: METADATA_PATH,
+      copyright: COPYRIGHT,
+      skip_binary_upload: true,
+      skip_screenshots: true,
+      submit_for_review: true,
+      automatic_release: false,
+      precheck_include_in_app_purchases: false,
+      submission_information: {
+        add_id_info_uses_idfa: false,
+        export_compliance_uses_encryption: false,
+        content_rights_contains_third_party_content: true,
+        content_rights_has_rights: true
+      },
+      force: true
+    )
+    UI.success("Submitted for App Review.")
+  end
+end

@@ -8,7 +8,14 @@ import SwiftUI
 struct PaywallView: View {
     @EnvironmentObject var store: AppStore
     @EnvironmentObject var purchases: Purchases
-    @State private var selected = "pro-year"
+    /// Which card is open. Pro is the default — it is the plan the screen is arguing for,
+    /// and an opening screen of four collapsed prices asks the user to work out the
+    /// difference themselves.
+    @State private var selected = PaywallView.defaultOfferID
+
+    /// Set on every appearance, not just on first construction: coming back to the paywall
+    /// after opening Plus once should still open on Pro.
+    static let defaultOfferID = "pro-year"
     @State private var trialOn = true
     @State private var showCodeSheet = false
 
@@ -24,28 +31,56 @@ struct PaywallView: View {
         let perks: [String]
     }
 
+    /// The perks are written as things the user just did in onboarding — import a video,
+    /// build a list, price a week — rather than as units of AI. "100 AI saves a month" only
+    /// means something to us; "100 recipes imported a month" means something to them.
+    ///
+    /// Prices are unchanged: they come from the measured per-action cost, not from this copy.
+    /// Auto-renewal terms for the plan currently selected, stated next to the purchase in
+    /// plain words: price, billing period, that it renews until cancelled, and where to
+    /// cancel. California's automatic renewal law (and Apple's guideline 3.1.2) require this
+    /// before the user pays, not only in the Terms.
+    private var renewalDisclosure: String {
+        let offer = offers.first { $0.id == selected } ?? offers[0]
+        let period = offer.annual ? "year" : "month"
+        var text = "\(offer.name) is \(offer.price) per \(period) and renews automatically every \(period) at that price until you cancel. "
+        if !offer.annual, store.entitlement.welcomeOfferActive, let intro = Promo.introPrice(for: offer.plan) {
+            text = "\(offer.name) is \(intro) for the first month, then \(offer.price) per month, renewing automatically until you cancel. "
+        }
+        text += "Payment is charged to your Apple account. Cancel any time in Settings > Apple ID > Subscriptions, at least 24 hours before the renewal date. Recipes you've saved stay yours on any plan."
+        return text
+    }
+
     private var offers: [Offer] {
         [
             Offer(id: "plus-month", name: "Plus", price: Entitlement.Plan.plus.priceLabel, cadence: "/month",
                   plan: .plus, annual: false, save: nil,
-                  perks: ["100 AI saves a month", "Save from links, video & text",
-                          "Unlimited recipes you add yourself", "Meal plan & shopping list"]),
+                  perks: ["100 recipe imports a month", "Import from video, links & text",
+                          "Cost estimates on every list", "Unlimited meal plans",
+                          "Ingredient reuse across your week"]),
             Offer(id: "plus-year", name: "Plus · Yearly", price: Entitlement.Plan.plus.annualPriceLabel, cadence: "/year",
                   plan: .plus, annual: true, save: "Save 33%",
-                  perks: ["100 AI saves a month", "Save from links, video & text",
-                          "Unlimited recipes you add yourself", "Meal plan & shopping list",
-                          "Full community access"]),
+                  perks: ["100 recipe imports a month", "Import from video, links & text",
+                          "Cost estimates on every list", "Unlimited meal plans",
+                          "Ingredient reuse across your week", "Full community access"]),
             Offer(id: "pro-month", name: "Pro", price: Entitlement.Plan.pro.priceLabel, cadence: "/month",
                   plan: .pro, annual: false, save: nil,
-                  perks: ["Scan a dish with your camera", "400 AI actions a month",
-                          "Save from links, video & text", "Everything in Plus"]),
+                  perks: ["Snap a dish and get the recipe", "400 imports & scans a month",
+                          "Everything in Plus"]),
             Offer(id: "pro-year", name: "Pro · Yearly", price: Entitlement.Plan.pro.annualPriceLabel, cadence: "/year",
                   plan: .pro, annual: true, save: "Save 36%",
-                  perks: ["Scan a dish with your camera", "400 AI actions a month",
-                          "Save from links, video & text", "Unlimited recipes you add yourself",
-                          "Meal plan & shopping list", "Full community access", "Priority support"]),
+                  perks: ["Snap a dish and get the recipe", "400 imports & scans a month",
+                          "Import from video, links & text", "Cost estimates on every list",
+                          "Unlimited meal plans", "Full community access", "Priority support"]),
         ]
     }
+
+    /// What the user keeps without paying. Stated plainly on the end-of-onboarding pitch,
+    /// because the honest answer — everything you just built — is also the reason to trust
+    /// the paid tiers.
+    private let freePerks = ["Everything you just built, saved",
+                             "5 recipe imports a month",
+                             "Shopping lists & meal planning"]
 
     // Card colours are positional, deepening toward the hero at the bottom.
     private func style(_ index: Int) -> CardStyle {
@@ -86,6 +121,10 @@ struct PaywallView: View {
                 }
                 .padding(.top, 26)
 
+                if store.paywallReason == .onboardingComplete {
+                    freeCard.padding(.top, 20)
+                }
+
                 if store.entitlement.canStartTrial {
                     trialToggle
                         .padding(.top, 22)
@@ -94,7 +133,7 @@ struct PaywallView: View {
                 Button { store.goBack() } label: {
                     Text("Continue with Free")
                         .font(nunito(15, .extrabold))
-                        .foregroundStyle(Color.white)
+                        .foregroundStyle(Color.gsFg)
                         .frame(maxWidth: .infinity, minHeight: 54)
                 }
                 .buttonStyle(DarkButtonStyle())
@@ -112,12 +151,20 @@ struct PaywallView: View {
                 .foregroundStyle(Color.gsAccentInk)
                 .padding(.top, 16)
 
-                Text("Subscriptions renew automatically and can be cancelled any time in your Apple account settings. Recipes you've saved stay yours on any plan.")
+                Text(renewalDisclosure)
                     .font(nunito(10.5, .semibold))
                     .foregroundStyle(Color.gsMuted)
                     .multilineTextAlignment(.center)
                     .padding(.top, 14)
                     .padding(.horizontal, 16)
+
+                HStack(spacing: 16) {
+                    Link("Terms of Use", destination: Legal.terms)
+                    Link("Privacy Policy", destination: Legal.privacy)
+                }
+                .font(nunito(11, .extrabold))
+                .foregroundStyle(Color.gsAccentInk)
+                .padding(.top, 8)
             }
             .padding(.horizontal, 20)
             .padding(.top, 8)
@@ -125,6 +172,11 @@ struct PaywallView: View {
         }
         .background(Color(hex: 0xFFF7DA).ignoresSafeArea())
         .sheet(isPresented: $showCodeSheet) { PromoCodeSheet() }
+        .onAppear {
+            // A camera-gated visit is specifically about Pro's scanning, so open the monthly
+            // Pro card there; everywhere else the yearly one leads.
+            selected = store.paywallReason == .cameraIsPro ? "pro-month" : Self.defaultOfferID
+        }
     }
 
     // MARK: - Pieces
@@ -145,19 +197,65 @@ struct PaywallView: View {
                     .buttonStyle(PressableStyle(scale: 0.94))
                     Spacer()
                 }
-                Text("Get unlimited\naccess")
+                Text(headline)
                     .font(nunito(26, .black))
                     .multilineTextAlignment(.center)
                     .lineSpacing(-2)
                     .padding(.horizontal, 56)
             }
-            if store.paywallReason != .upgrade {
-                Text(store.paywallReason.title)
-                    .font(nunito(12.5, .semibold))
+            Text(store.paywallReason.body)
+                .font(nunito(12.5, .semibold))
+                .foregroundStyle(Color.gsMuted)
+                .multilineTextAlignment(.center)
+                .padding(.top, 6)
+                .padding(.horizontal, 12)
+        }
+    }
+
+    /// The end-of-onboarding pitch leads with what the user just built; every other entry
+    /// point leads with what they were stopped from doing.
+    private var headline: String {
+        switch store.paywallReason {
+        case .onboardingComplete: return "Your food system\nis ready"
+        case .upgrade: return "Your personal\nfood planner"
+        default: return "Get unlimited\naccess"
+        }
+    }
+
+    /// What Free keeps. Only shown on the end-of-onboarding pitch, where the user has not hit
+    /// a wall and deserves to see that walking away costs them nothing they just made.
+    private var freeCard: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Free").font(nunito(17, .black)).foregroundStyle(Color.gsFg)
+                Text("what you have now")
+                    .font(nunito(11.5, .bold))
                     .foregroundStyle(Color.gsMuted)
-                    .padding(.top, 4)
+                Spacer()
+                Text("$0").font(nunito(17, .black)).foregroundStyle(Color.gsFg)
+            }
+            ForEach(freePerks, id: \.self) { perk in
+                HStack(spacing: 9) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .black))
+                        .foregroundStyle(Color.gsAccentInk)
+                    Text(perk)
+                        .font(nunito(13, .semibold))
+                        .foregroundStyle(Color.gsFg)
+                    Spacer(minLength: 0)
+                }
             }
         }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.white)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(Color.gsFg.opacity(0.1), lineWidth: 1)
+                )
+        )
     }
 
     private var trialToggle: some View {
@@ -199,6 +297,7 @@ struct PaywallView: View {
     /// StoreKit products can't load (e.g. the plain simulator).
     @MainActor
     private func buy(_ offer: Offer) async {
+        if purchases.products.isEmpty { await purchases.loadProducts() }
         guard purchases.product(for: offer.plan, annual: offer.annual) != nil else {
             print("[Paywall] No StoreKit product for \(offer.plan) annual=\(offer.annual). Loaded: \(purchases.products.map(\.id))")
             store.showToast("Subscriptions aren’t available right now. Please try again shortly.")
@@ -277,33 +376,40 @@ struct PlanTabCard: View {
         VStack(alignment: .leading, spacing: 0) {
             // Tab row: name + price on the raised left, Choose in the right-hand notch.
             HStack(alignment: .top) {
-                Button(action: onSelect) {
-                    VStack(alignment: .leading, spacing: 2) {
+                // No Button here any more: the whole card takes the tap (see the
+                // onTapGesture below), so only the price block used to be expandable.
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
                         Text(offer.name)
                             .font(nunito(13, .bold))
                             .foregroundStyle(style.sub)
-                        HStack(alignment: .firstTextBaseline, spacing: 3) {
-                            Text(offer.price)
-                                .font(nunito(30, .black))
-                                .foregroundStyle(style.ink)
-                            Text(offer.cadence)
-                                .font(nunito(12, .bold))
+                        // The affordance that says the rest of the card is tappable.
+                        if !expanded {
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 9, weight: .black))
                                 .foregroundStyle(style.sub)
                         }
-                        if isCurrent {
-                            HStack(spacing: 5) {
-                                Image(systemName: "clock").font(.system(size: 10, weight: .bold))
-                                Text(renewal).font(nunito(11.5, .extrabold))
-                            }
-                            .foregroundStyle(style.ink.opacity(0.75))
-                        } else if let introPrice {
-                            Text("First month \(introPrice)")
-                                .font(nunito(11.5, .extrabold))
-                                .foregroundStyle(style.ink)
+                    }
+                    HStack(alignment: .firstTextBaseline, spacing: 3) {
+                        Text(offer.price)
+                            .font(nunito(30, .black))
+                            .foregroundStyle(style.ink)
+                        Text(offer.cadence)
+                            .font(nunito(12, .bold))
+                            .foregroundStyle(style.sub)
+                    }
+                    if isCurrent {
+                        HStack(spacing: 5) {
+                            Image(systemName: "clock").font(.system(size: 10, weight: .bold))
+                            Text(renewal).font(nunito(11.5, .extrabold))
                         }
+                        .foregroundStyle(style.ink.opacity(0.75))
+                    } else if let introPrice {
+                        Text("First month \(introPrice)")
+                            .font(nunito(11.5, .extrabold))
+                            .foregroundStyle(style.ink)
                     }
                 }
-                .buttonStyle(.plain)
                 .padding(.top, 18)
 
                 Spacer(minLength: 12)
@@ -372,8 +478,17 @@ struct PlanTabCard: View {
         .compositingGroup()
         .clipShape(TabCardShape(step: step))
         .contentShape(Rectangle())
+        // The whole card opens it, not just the price. The "Choose" Button inside takes
+        // its own taps first, so buying is still one deliberate tap on that pill.
+        .onTapGesture {
+            guard !expanded else { return }
+            Haptics.tap(.light)
+            onSelect()
+        }
         .shadow(color: .black.opacity(expanded ? 0.16 : 0.08), radius: 16, y: 8)
         .animation(AppStore.stepAnimation, value: expanded)
+        .accessibilityElement(children: .contain)
+        .accessibilityHint(expanded ? "" : "Tap to see what \(offer.name) includes")
     }
 }
 
@@ -424,7 +539,7 @@ struct PromoCodeSheet: View {
             } label: {
                 Text("Redeem")
                     .font(nunito(15, .extrabold))
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(Color.gsFg)
                     .frame(maxWidth: .infinity, minHeight: 52)
             }
             .buttonStyle(DarkButtonStyle())

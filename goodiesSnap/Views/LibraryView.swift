@@ -300,7 +300,7 @@ struct LibraryView: View {
                 Button { withAnimation(AppStore.stepAnimation) { tab = .discover } } label: {
                     Text("Browse Discover")
                         .font(nunito(13.5, .extrabold))
-                        .foregroundStyle(Color.white)
+                        .foregroundStyle(Color.gsFg)
                         .padding(.horizontal, 20)
                         .frame(minHeight: 46)
                 }
@@ -749,7 +749,7 @@ struct RecipeFilterSheet: View {
                 dismiss()
             } label: {
                 Text(store.catalogLoading ? "Filtering…" : "Show recipes")
-                    .font(nunito(15, .extrabold)).foregroundStyle(.white)
+                    .font(nunito(15, .extrabold)).foregroundStyle(Color.gsFg)
                     .frame(maxWidth: .infinity, minHeight: 54)
             }
             .buttonStyle(DarkButtonStyle())

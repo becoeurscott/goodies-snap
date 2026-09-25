@@ -1,5 +1,6 @@
 import SwiftUI
 import GoogleSignIn
+import AuthenticationServices
 
 /// Sign in / create account.
 ///
@@ -311,7 +312,7 @@ struct AuthView: View {
                         .font(nunito(15.5, .extrabold))
                 }
             }
-            .foregroundStyle(Color.white)
+            .foregroundStyle(Color.gsFg)
             .frame(maxWidth: .infinity, minHeight: 54)
         }
         .buttonStyle(DarkButtonStyle())
@@ -348,7 +349,7 @@ struct AuthView: View {
                     Haptics.notify(.warning)
                     return
                 }
-                store.showToast("Apple sign-in isn't set up yet", seconds: 2.4)
+                Task { await handleAppleSignIn() }
             }
 
             socialButton {
@@ -416,7 +417,7 @@ struct AuthView: View {
                         .font(.system(size: 19, weight: .semibold))
                         .foregroundStyle(acceptedTerms ? Color.gsAccentInk
                                          : termsNudge ? Color.gsAccentInk : Color.gsMuted)
-                    (Text("I agree to the ")
+                    (Text("I'm 13 or older and agree to the ")
                         .foregroundStyle(termsNudge && !acceptedTerms ? Color.gsAccentInk : Color.gsMuted)
                      + Text("Terms").foregroundStyle(Color.gsAccentInk)
                      + Text(" and ").foregroundStyle(termsNudge && !acceptedTerms ? Color.gsAccentInk : Color.gsMuted)
@@ -430,7 +431,7 @@ struct AuthView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Agree to the Terms of Use, Privacy Policy and community rules")
+            .accessibilityLabel("Confirm you are 13 or older and agree to the Terms of Use, Privacy Policy and community rules")
             .accessibilityAddTraits(acceptedTerms ? [.isSelected] : [])
 
             if termsNudge && !acceptedTerms {
@@ -447,6 +448,26 @@ struct AuthView: View {
             .font(nunito(10.5, .extrabold))
             .foregroundStyle(Color.gsAccentInk)
             .padding(.leading, 29)
+        }
+    }
+
+    private func handleAppleSignIn() async {
+        do {
+            let cred = try await AppleSignIn.shared.perform()
+            guard let tokenData = cred.identityToken,
+                  let token = String(data: tokenData, encoding: .utf8) else {
+                store.showToast("Couldn't get Apple credentials", seconds: 2.4)
+                return
+            }
+            // Apple only hands over the name on the very first authorization; join the parts
+            // when it does, and let the server fall back otherwise.
+            let name = [cred.fullName?.givenName, cred.fullName?.familyName]
+                .compactMap { $0 }.joined(separator: " ")
+            await social.signInWithApple(identityToken: token, name: name.isEmpty ? nil : name)
+        } catch let error as ASAuthorizationError where error.code == .canceled {
+            // User dismissed the sheet — not an error worth a toast.
+        } catch {
+            store.showToast("Apple sign-in failed", seconds: 2.4)
         }
     }
 
@@ -579,5 +600,56 @@ struct GoogleGlyph: View {
             .trim(from: from / 360, to: to / 360)
             .stroke(color, style: StrokeStyle(lineWidth: lw, lineCap: .butt))
             .frame(width: size - lw, height: size - lw)
+    }
+}
+
+// MARK: - Sign in with Apple bridge
+
+/// Wraps ASAuthorizationController's delegate callbacks in an async call. A singleton because
+/// the controller holds its delegate weakly, so the coordinator has to outlive the request;
+/// `active` pins the in-flight one for the duration.
+final class AppleSignIn: NSObject, ASAuthorizationControllerDelegate,
+                         ASAuthorizationControllerPresentationContextProviding {
+    static let shared = AppleSignIn()
+
+    private var continuation: CheckedContinuation<ASAuthorizationAppleIDCredential, Error>?
+    private var active: AppleSignIn?
+
+    @MainActor
+    func perform() async throws -> ASAuthorizationAppleIDCredential {
+        let request = ASAuthorizationAppleIDProvider().createRequest()
+        request.requestedScopes = [.fullName, .email]
+        let controller = ASAuthorizationController(authorizationRequests: [request])
+        controller.delegate = self
+        controller.presentationContextProvider = self
+        active = self
+        return try await withCheckedThrowingContinuation { cont in
+            self.continuation = cont
+            controller.performRequests()
+        }
+    }
+
+    func authorizationController(controller: ASAuthorizationController,
+                                didCompleteWithAuthorization authorization: ASAuthorization) {
+        defer { active = nil }
+        if let cred = authorization.credential as? ASAuthorizationAppleIDCredential {
+            continuation?.resume(returning: cred)
+        } else {
+            continuation?.resume(throwing: ASAuthorizationError(.failed))
+        }
+        continuation = nil
+    }
+
+    func authorizationController(controller: ASAuthorizationController,
+                                didCompleteWithError error: Error) {
+        defer { active = nil }
+        continuation?.resume(throwing: error)
+        continuation = nil
+    }
+
+    func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.keyWindow }
+            .first ?? ASPresentationAnchor()
     }
 }

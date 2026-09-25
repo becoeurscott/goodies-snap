@@ -90,7 +90,7 @@ struct SupportView: View {
                         Text("Start a conversation")
                             .font(nunito(15, .extrabold))
                     }
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(Color.gsFg)
                     .frame(maxWidth: .infinity, minHeight: 54)
                 }
                 .buttonStyle(DarkButtonStyle())
