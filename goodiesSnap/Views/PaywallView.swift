@@ -18,6 +18,7 @@ struct PaywallView: View {
     static let defaultOfferID = "pro-year"
     @State private var trialOn = true
     @State private var showCodeSheet = false
+    @State private var restoring = false
 
     /// A purchasable option as shown on one card.
     struct Offer: Identifiable {
@@ -143,9 +144,12 @@ struct PaywallView: View {
                     Button { showCodeSheet = true } label: {
                         Text("Have a promo code?").font(nunito(12.5, .extrabold))
                     }
-                    Button { store.addTopUp(50) } label: {
-                        Text("Top up 50 actions · $4.99").font(nunito(12.5, .extrabold))
+                    // Apple requires a way to restore subscriptions on a new device or after
+                    // a reinstall (Guideline 3.1.1).
+                    Button { Task { await restore() } } label: {
+                        Text(restoring ? "Restoring…" : "Restore purchases").font(nunito(12.5, .extrabold))
                     }
+                    .disabled(restoring)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(Color.gsAccentInk)
@@ -314,6 +318,26 @@ struct PaywallView: View {
         case .failed(let message):
             Haptics.notify(.error)
             store.showToast(message)
+        }
+    }
+}
+
+extension PaywallView {
+    /// Re-syncs with Apple and re-applies any active subscription to this account.
+    @MainActor
+    func restore() async {
+        restoring = true
+        defer { restoring = false }
+        switch await purchases.restore() {
+        case .success(let plan):
+            Haptics.notify(.success)
+            store.showToast("Your \(plan.title) plan is restored")
+            store.goBack()
+        case .failed(let message):
+            Haptics.notify(.error)
+            store.showToast(message)
+        case .pending, .cancelled:
+            break
         }
     }
 }

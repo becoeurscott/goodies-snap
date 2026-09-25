@@ -69,6 +69,9 @@ These clear the two guaranteed UGC rejections (5.1.1(v) deletion, 1.2 moderation
 ## 4. In-App Purchases / subscriptions — [REJECT-RISK]
 - ✅ StoreKit 2 (`Purchases.swift`), server JWS verification against pinned Apple Root CA G3,
   restore + `currentEntitlements` sync. Client can't self-grant plan (403 verified).
+- ✅ **Restore purchases** button on the paywall (was only in code, not on screen — 3.1.1).
+- ✅ Removed the "Top up 50 actions · $4.99" button: it granted actions for free, with no
+  IAP product behind it (3.1.1) — and the server never honoured them anyway.
 - ✅ `APP_APPLE_ID = 6804307648` secret set → **Production** receipts verify (done 2026-09-07).
 - ✅ Paywall shows Terms + Privacy links and subscription terms (3.1.2).
 - ✅ **Intro-offer misrepresentation fixed** — `Promo.introOfferAvailable = false`; paywall

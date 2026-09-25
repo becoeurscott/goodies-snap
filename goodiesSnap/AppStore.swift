@@ -540,14 +540,6 @@ final class AppStore: ObservableObject {
         return (true, "\(bonus) AI actions added")
     }
 
-    func addTopUp(_ count: Int = 50) {
-        Haptics.notify(.success)
-        entitlement.topUp += count
-        persistEntitlement()
-        goBack()
-        showToast("\(count) extra AI actions added")
-    }
-
     private func persistEntitlement() {
         if let data = try? JSONEncoder().encode(entitlement) {
             UserDefaults.standard.set(data, forKey: Self.entitlementKey)
