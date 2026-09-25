@@ -133,7 +133,7 @@ async function callModel(opts: {
     headers: {
       Authorization: `Bearer ${opts.key}`,
       'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://goodiessnap.app',
+      'HTTP-Referer': 'https://goodiessnap.com',
       'X-Title': 'goodiesSnap',
     },
     body: JSON.stringify({

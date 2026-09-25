@@ -30,6 +30,7 @@ struct FeedView: View {
     private var serverView: some View {
         ZStack(alignment: .leading) {
             VStack(spacing: 0) {
+                hubBar
                 channelHeader
                 Divider().overlay(Color.fg(0.08))
                 chatArea
@@ -47,6 +48,34 @@ struct FeedView: View {
             }
         }
         .animation(.easeOut(duration: 0.25), value: showChannels)
+    }
+
+    // MARK: - Hub bar (back + Videos / Community)
+
+    /// The Community hub's switcher. The dock is hidden on this screen, so this bar also
+    /// carries the only visible way back to Home.
+    private var hubBar: some View {
+        HStack(spacing: 14) {
+            Button { store.goBack() } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 15, weight: .black))
+                    .foregroundStyle(Color.gsFg)
+                    .frame(width: 36, height: 36)
+                    .background(Color.fg(0.06))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+
+            CommunityTabLabel(title: "Videos", selected: false, dark: false) {
+                withAnimation(.easeOut(duration: 0.2)) { store.communityTab = .videos }
+            }
+            CommunityTabLabel(title: "Community", selected: true, dark: false) {}
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 6)
+        .padding(.bottom, 4)
+        .background(Color.gsBg)
     }
 
     // MARK: - Channel header

@@ -46,6 +46,22 @@ struct RootView: View {
         }
         .foregroundStyle(Color.gsFg)
         .font(nunito(14, .semibold))
+        .sheet(isPresented: $store.showAIConsent, onDismiss: {
+            if !store.aiSharingAllowed { store.finishAIConsent(allow: false) }
+        }) {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("Allow AI recipe processing?").font(.title2.bold())
+                Text("Goodies Snap sends the photo, recipe text, link content, and dish details you choose to OpenRouter and its AI model providers, including Anthropic, to identify food and create recipes. Only send content you are comfortable sharing.")
+                Text("AI results can be inaccurate. Check ingredients, allergens, and safe cooking temperatures. You can turn this permission off in Profile.")
+                    .foregroundStyle(.secondary)
+                Link("Read the Privacy Policy", destination: Legal.privacy)
+                Button("Allow and continue") { store.finishAIConsent(allow: true) }
+                    .buttonStyle(.borderedProminent)
+                Button("Not now", role: .cancel) { store.finishAIConsent(allow: false) }
+            }
+            .padding(24)
+            .presentationDetents([.large])
+        }
         // Sign-in state and the post-sign-in redirect are driven by SocialStore.onSignedIn
         // (wired in App.swift) — a deterministic callback, not a fragile view onChange.
         .onChange(of: social.signedIn) { _, yes in store.isAuthenticated = yes }
@@ -61,14 +77,17 @@ struct RootView: View {
             }
         }
         .onOpenURL { url in
+            #if DEBUG
             guard url.scheme == "goodiessnap" else { return }
             jump(to: url.host ?? "")
+            #endif
         }
         .onAppear {
             store.isAuthenticated = social.signedIn
             store.isGuestSession = social.isGuest
             store.aiToken = social.session?.accessToken
             store.currentUserID = social.session?.userID
+            #if DEBUG
             // Launch-argument navigation (`-gsScreen feed`), used by UI automation.
             if let target = UserDefaults.standard.string(forKey: "gsScreen") {
                 jump(to: target)
@@ -138,9 +157,11 @@ struct RootView: View {
             if let stage = UserDefaults.standard.string(forKey: "gsScan") {
                 enterScan(stage)
             }
+            #endif
         }
     }
 
+    #if DEBUG
     private func jump(to name: String) {
         withTransaction(Transaction(animation: nil)) { store.phase = .app }
         switch name {
@@ -221,6 +242,7 @@ struct RootView: View {
             break
         }
     }
+    #endif
 
     @ViewBuilder
     private var appContent: some View {
@@ -326,7 +348,7 @@ struct RootView: View {
                 case .basket: BasketView()
                 case .plan: MealPlanView()
                 case .profile: ProfileView()
-                case .feed: FeedView()
+                case .feed: if store.communityTab == .videos { ReelsView() } else { FeedView() }
                 case .reelProfile: ReelProfileView()
                 case .discover: DiscoverView()
                 case .paywall: PaywallView()

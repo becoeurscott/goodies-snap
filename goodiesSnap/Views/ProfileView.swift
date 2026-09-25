@@ -50,7 +50,7 @@ struct ProfileView: View {
             Button("Reset", role: .destructive) { store.resetLibrary() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Your saved recipes, shopping list, and meal plan go back to the starter samples.")
+            Text("This removes your saved recipes, shopping list, and meal plan. This cannot be undone.")
         }
         .alert("Disconnect?", isPresented: $confirmDisconnect) {
             Button("Disconnect", role: .destructive) { social.signOut() }
@@ -338,7 +338,7 @@ struct ProfileView: View {
             .opacity(store.shopping.isEmpty ? 0.45 : 1)
 
             Button { confirmReset = true } label: {
-                Text("Reset library to samples")
+                Text("Clear saved library")
                     .font(nunito(12.5, .bold))
                     .foregroundStyle(Color.fg(0.4))
                     .frame(maxWidth: .infinity, minHeight: 44)
@@ -354,6 +354,15 @@ struct ProfileView: View {
             Text("Privacy & legal")
                 .font(nunito(19, .extrabold))
 
+            Toggle("Allow AI recipe processing", isOn: Binding(
+                get: { store.aiSharingAllowed },
+                set: { value in
+                    if value { store.showAIConsent = true }
+                    else { store.finishAIConsent(allow: false) }
+                }
+            ))
+            .padding(.vertical, 8)
+
             Button { store.go(to: .support) } label: {
                 HStack(spacing: 14) {
                     Image(systemName: "bubble.left.and.text.bubble.right.fill")
@@ -363,9 +372,9 @@ struct ProfileView: View {
                         .background(Color.gsPeach)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("Chat support")
+                        Text("Help & support")
                             .font(nunito(15, .extrabold))
-                        Text("FAQ & live help")
+                        Text("FAQs & email support")
                             .font(nunito(11.5, .semibold))
                             .foregroundStyle(Color.fg(0.5))
                     }

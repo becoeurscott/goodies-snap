@@ -53,7 +53,7 @@ struct SupportView: View {
     private var helpView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                header(title: "Chat support")
+                header(title: "Help & support")
 
                 Text("Related questions:")
                     .font(nunito(19, .extrabold))
@@ -81,13 +81,11 @@ struct SupportView: View {
                 .glassCard(radius: 20, fill: 0.05, stroke: 0.1)
                 .padding(.top, 14)
 
-                Button {
-                    withAnimation(AppStore.navAnimation) { showChat = true }
-                } label: {
+                Link(destination: Legal.support) {
                     HStack(spacing: 10) {
                         Image(systemName: "bubble.left.fill")
                             .font(.system(size: 14, weight: .bold))
-                        Text("Start a conversation")
+                        Text("Contact support")
                             .font(nunito(15, .extrabold))
                     }
                     .foregroundStyle(Color.gsFg)
@@ -112,7 +110,8 @@ struct SupportView: View {
 
     private func topicCard(_ topic: Topic) -> some View {
         Button {
-            withAnimation(AppStore.navAnimation) { showChat = true }
+            let faqID = ["recipes": "save", "subscription": "cancel", "account": "delete", "importing": "actions"][topic.id]
+            withAnimation(AppStore.stepAnimation) { expandedFAQ = faqID }
         } label: {
             HStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -440,7 +439,7 @@ struct SupportView: View {
         case .openRouter:
             request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
             request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-            request.setValue("https://goodiessnap.app", forHTTPHeaderField: "HTTP-Referer")
+            request.setValue("https://goodiessnap.com", forHTTPHeaderField: "HTTP-Referer")
             request.setValue("goodiesSnap", forHTTPHeaderField: "X-Title")
             body = [
                 "model": "anthropic/claude-haiku-4-5-20251001",

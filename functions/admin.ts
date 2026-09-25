@@ -20,7 +20,7 @@ import { createClient } from 'npm:@insforge/sdk';
 // Defence in depth: this function is already bearer-authed and admin-gated, but there's no
 // reason for any origin other than the control room to call it from a browser.
 const CORS = {
-  'Access-Control-Allow-Origin': 'https://j7pth4qn.insforge.site',
+  'Access-Control-Allow-Origin': 'https://goodiessnap.com',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   'Vary': 'Origin',

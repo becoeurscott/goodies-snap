@@ -3,8 +3,7 @@ import SwiftUI
 /// Upgrade screen — stacked "folder tab" plan cards. The selected card expands to show
 /// what it includes; the others stay collapsed behind it.
 ///
-/// Purchases still flip local entitlement state via `activate(_:)`. Wiring StoreKit 2 means
-/// swapping that call for a verified transaction — the layout stays as-is.
+/// Prices and purchases come from StoreKit; the server verifies paid access.
 struct PaywallView: View {
     @EnvironmentObject var store: AppStore
     @EnvironmentObject var purchases: Purchases
@@ -16,8 +15,7 @@ struct PaywallView: View {
     /// Set on every appearance, not just on first construction: coming back to the paywall
     /// after opening Plus once should still open on Pro.
     static let defaultOfferID = "pro-year"
-    @State private var trialOn = true
-    @State private var showCodeSheet = false
+    @State private var restoring = false
 
     /// A purchasable option as shown on one card.
     struct Offer: Identifiable {
@@ -42,6 +40,9 @@ struct PaywallView: View {
     /// before the user pays, not only in the Terms.
     private var renewalDisclosure: String {
         let offer = offers.first { $0.id == selected } ?? offers[0]
+        guard purchases.product(for: offer.plan, annual: offer.annual) != nil else {
+            return "Subscriptions are temporarily unavailable. You can continue using the free plan or try again."
+        }
         let period = offer.annual ? "year" : "month"
         var text = "\(offer.name) is \(offer.price) per \(period) and renews automatically every \(period) at that price until you cancel. "
         if !offer.annual, store.entitlement.welcomeOfferActive, let intro = Promo.introPrice(for: offer.plan) {
@@ -53,25 +54,25 @@ struct PaywallView: View {
 
     private var offers: [Offer] {
         [
-            Offer(id: "plus-month", name: "Plus", price: Entitlement.Plan.plus.priceLabel, cadence: "/month",
+            Offer(id: "plus-month", name: "Plus", price: purchases.priceLabel(for: .plus, annual: false), cadence: "/month",
                   plan: .plus, annual: false, save: nil,
                   perks: ["100 recipe imports a month", "Import from video, links & text",
                           "Cost estimates on every list", "Unlimited meal plans",
                           "Ingredient reuse across your week"]),
-            Offer(id: "plus-year", name: "Plus · Yearly", price: Entitlement.Plan.plus.annualPriceLabel, cadence: "/year",
-                  plan: .plus, annual: true, save: "Save 33%",
+            Offer(id: "plus-year", name: "Plus · Yearly", price: purchases.priceLabel(for: .plus, annual: true), cadence: "/year",
+                  plan: .plus, annual: true, save: nil,
                   perks: ["100 recipe imports a month", "Import from video, links & text",
                           "Cost estimates on every list", "Unlimited meal plans",
                           "Ingredient reuse across your week", "Full community access"]),
-            Offer(id: "pro-month", name: "Pro", price: Entitlement.Plan.pro.priceLabel, cadence: "/month",
+            Offer(id: "pro-month", name: "Pro", price: purchases.priceLabel(for: .pro, annual: false), cadence: "/month",
                   plan: .pro, annual: false, save: nil,
                   perks: ["Snap a dish and get the recipe", "400 imports & scans a month",
                           "Everything in Plus"]),
-            Offer(id: "pro-year", name: "Pro · Yearly", price: Entitlement.Plan.pro.annualPriceLabel, cadence: "/year",
-                  plan: .pro, annual: true, save: "Save 36%",
+            Offer(id: "pro-year", name: "Pro · Yearly", price: purchases.priceLabel(for: .pro, annual: true), cadence: "/year",
+                  plan: .pro, annual: true, save: nil,
                   perks: ["Snap a dish and get the recipe", "400 imports & scans a month",
                           "Import from video, links & text", "Cost estimates on every list",
-                          "Unlimited meal plans", "Full community access", "Priority support"]),
+                          "Unlimited meal plans", "Full community access"]),
         ]
     }
 
@@ -116,6 +117,7 @@ struct PaywallView: View {
                             onSelect: { withAnimation(AppStore.stepAnimation) { selected = offer.id } },
                             onChoose: { choose(offer) }
                         )
+                        .disabled(purchases.purchasing != nil || restoring)
                         .zIndex(Double(i))
                     }
                 }
@@ -123,11 +125,6 @@ struct PaywallView: View {
 
                 if store.paywallReason == .onboardingComplete {
                     freeCard.padding(.top, 20)
-                }
-
-                if store.entitlement.canStartTrial {
-                    trialToggle
-                        .padding(.top, 22)
                 }
 
                 Button { store.goBack() } label: {
@@ -140,13 +137,27 @@ struct PaywallView: View {
                 .padding(.top, 14)
 
                 HStack(spacing: 18) {
-                    Button { showCodeSheet = true } label: {
-                        Text("Have a promo code?").font(nunito(12.5, .extrabold))
+                    Button {
+                        restoring = true
+                        Task {
+                            let result = await purchases.restore()
+                            restoring = false
+                            switch result {
+                            case .success: store.showToast("Purchases restored")
+                            case .failed(let message): store.showToast(message)
+                            default: break
+                            }
+                        }
+                    } label: {
+                        Text(restoring ? "Restoring..." : "Restore purchases").font(nunito(12.5, .extrabold))
                     }
-                    Button { store.addTopUp(50) } label: {
-                        Text("Top up 50 actions · $4.99").font(nunito(12.5, .extrabold))
+                    if purchases.products.isEmpty {
+                        Button { Task { await purchases.loadProducts() } } label: {
+                            Text("Retry").font(nunito(12.5, .extrabold))
+                        }
                     }
                 }
+                .disabled(restoring || purchases.purchasing != nil || purchases.loading)
                 .buttonStyle(.plain)
                 .foregroundStyle(Color.gsAccentInk)
                 .padding(.top, 16)
@@ -171,7 +182,7 @@ struct PaywallView: View {
             .padding(.bottom, 40)
         }
         .background(Color(hex: 0xFFF7DA).ignoresSafeArea())
-        .sheet(isPresented: $showCodeSheet) { PromoCodeSheet() }
+        .task { await purchases.loadProducts() }
         .onAppear {
             // A camera-gated visit is specifically about Pro's scanning, so open the monthly
             // Pro card there; everywhere else the yearly one leads.
@@ -218,7 +229,7 @@ struct PaywallView: View {
         switch store.paywallReason {
         case .onboardingComplete: return "Your food system\nis ready"
         case .upgrade: return "Your personal\nfood planner"
-        default: return "Get unlimited\naccess"
+        default: return "More recipes,\nmore possibilities"
         }
     }
 
@@ -258,36 +269,12 @@ struct PaywallView: View {
         )
     }
 
-    private var trialToggle: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Start \(Promo.trialDays)-day free trial")
-                    .font(nunito(14, .extrabold))
-                Text("Pro, with \(Promo.trialActions) AI actions included")
-                    .font(nunito(11, .semibold))
-                    .foregroundStyle(Color.gsMuted)
-            }
-            Spacer()
-            Toggle("", isOn: $trialOn)
-                .labelsHidden()
-                .tint(Color.gsPeach)
-        }
-        .padding(.horizontal, 18)
-        .frame(minHeight: 60)
-        .background(Color.white)
-        .clipShape(Capsule())
-        .shadow(color: .black.opacity(0.05), radius: 10, y: 4)
-    }
-
     private func choose(_ offer: Offer) {
         guard store.isAuthenticated else {
             store.showAuth(.upgrade)
             return
         }
-        if trialOn, offer.plan == .pro, store.entitlement.canStartTrial {
-            store.startProTrial()
-            return
-        }
+        guard purchases.purchasing == nil else { return }
         Task { await buy(offer) }
     }
 
@@ -393,6 +380,8 @@ struct PlanTabCard: View {
                     HStack(alignment: .firstTextBaseline, spacing: 3) {
                         Text(offer.price)
                             .font(nunito(30, .black))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.5)
                             .foregroundStyle(style.ink)
                         Text(offer.cadence)
                             .font(nunito(12, .bold))
@@ -494,6 +483,7 @@ struct PlanTabCard: View {
 
 
 /// Promo-code entry. Codes grant one-off bonus actions.
+#if DEBUG
 struct PromoCodeSheet: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.dismiss) private var dismiss
@@ -562,3 +552,4 @@ struct PromoCodeSheet: View {
         .presentationDetents([.height(380)])
     }
 }
+#endif

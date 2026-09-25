@@ -17,3 +17,6 @@ What you can do:
 Goodies Snap includes a free plan with limited AI actions. Optional Plus and Pro subscriptions unlock higher monthly AI allowances and advanced recipe capture features. Subscriptions renew automatically unless canceled at least 24 hours before the end of the current period. You can manage or cancel subscriptions in your Apple Account settings.
 
 AI can make mistakes. Always check ingredients, allergens, cooking temperatures, and food safety before cooking.
+
+Privacy Policy: https://goodiessnap.com/privacy.html
+Terms of Use: https://goodiessnap.com/terms.html

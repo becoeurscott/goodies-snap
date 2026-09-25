@@ -125,7 +125,7 @@ struct HomeView: View {
                 }
 
                 if social.signedIn, social.posts.contains(where: { $0.recipe != nil }) {
-                    sectionHeader("From the community", count: nil, action: "See All") { store.go(to: .feed) }
+                    sectionHeader("From the community", count: nil, action: "See All") { store.openCommunity(.room) }
                         .padding(.top, 24)
 
                     ForEach(social.posts.filter { $0.recipe != nil }.prefix(2)) { post in
@@ -145,7 +145,7 @@ struct HomeView: View {
 
     private var header: some View {
         HStack {
-            IconButton(system: "person.2.fill") { store.go(to: .feed) }
+            IconButton(system: "person.2.fill") { store.openCommunity(.videos) }
             Spacer()
             VStack(spacing: 1) {
                 Text("goodiesSnap")
