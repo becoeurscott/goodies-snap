@@ -43,10 +43,9 @@ struct ReelsView: View {
     @State private var muted = false
 
     private var reels: [Reel] {
-        switch lane {
-        case .community: return social.reels.filter { $0.isCommunity }
-        case .recipes:   return social.reels.filter { $0.isYouTube }
-        }
+        // Videos only: people's uploaded clips first, then the recipe videos from YouTube.
+        // Photo posts live in the Community room, not in a video feed.
+        social.reels.filter { $0.isUpload } + social.reels.filter { $0.isYouTube }
     }
 
     var body: some View {
@@ -69,7 +68,7 @@ struct ReelsView: View {
             await social.loadReels()
             // Don't open on an empty lane: with nobody posting yet, Community is blank and the
             // feed looks broken. Land on whichever lane actually has something to play.
-            if social.reels.contains(where: { $0.isCommunity }) == false { lane = .recipes }
+            lane = .recipes
             if activeID == nil { activeID = reels.first?.id }
         }
         .onChange(of: lane) { _, _ in
@@ -79,8 +78,7 @@ struct ReelsView: View {
         // Opening a creator's reel from their profile grid jumps the feed to it.
         .onChange(of: store.reelFocusID) { _, id in
             guard let id else { return }
-            if social.reels.first(where: { $0.id == id })?.isYouTube == true { lane = .recipes }
-            else { lane = .community }
+            _ = id
             withAnimation { activeID = id }
             store.reelFocusID = nil
         }
@@ -145,21 +143,9 @@ struct ReelsView: View {
                 }
                 .buttonStyle(PressableStyle(scale: 0.92))
 
-                ForEach(Lane.allCases, id: \.self) { item in
-                    Button {
-                        Haptics.tap(.light)
-                        withAnimation(.easeOut(duration: 0.2)) { lane = item }
-                    } label: {
-                        VStack(spacing: 5) {
-                            Text(item.rawValue)
-                                .font(nunito(15, lane == item ? .black : .semibold))
-                                .foregroundStyle(lane == item ? .white : ReelStyle.dim)
-                            Capsule()
-                                .fill(lane == item ? ReelStyle.accent : .clear)
-                                .frame(width: 18, height: 3)
-                        }
-                    }
-                    .buttonStyle(.plain)
+                CommunityTabLabel(title: "Videos", selected: true, dark: true) {}
+                CommunityTabLabel(title: "Community", selected: false, dark: true) {
+                    withAnimation(.easeOut(duration: 0.2)) { store.communityTab = .room }
                 }
 
                 Spacer()
@@ -534,5 +520,34 @@ extension Int {
         default:
             return "\(self)"
         }
+    }
+}
+
+
+/// One tab of the Community hub's switcher: the title, bold when selected, with the
+/// peach underline. `dark` is the video feed's white-on-black version.
+struct CommunityTabLabel: View {
+    let title: String
+    let selected: Bool
+    let dark: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button {
+            guard !selected else { return }
+            Haptics.tap(.light)
+            action()
+        } label: {
+            VStack(spacing: 5) {
+                Text(title)
+                    .font(nunito(15, selected ? .black : .semibold))
+                    .foregroundStyle(dark ? (selected ? Color.white : ReelStyle.dim)
+                                          : (selected ? Color.gsFg : Color.gsMuted))
+                Capsule()
+                    .fill(selected ? ReelStyle.accent : .clear)
+                    .frame(width: 18, height: 3)
+            }
+        }
+        .buttonStyle(.plain)
     }
 }

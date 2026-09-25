@@ -151,6 +151,17 @@ final class AppStore: ObservableObject {
     @Published var reelProfileAuthor: String?
     /// A reel the feed should jump to, set when one is opened from a profile grid.
     @Published var reelFocusID: String?
+
+    /// The two tabs of the Community hub: the TikTok-style video feed, and the
+    /// Discord-style room. The Home community icon opens Videos; "See All" on the
+    /// community section opens the room.
+    enum CommunityTab { case videos, room }
+    @Published var communityTab: CommunityTab = .videos
+
+    func openCommunity(_ tab: CommunityTab) {
+        communityTab = tab
+        go(to: .feed)
+    }
     /// Artwork for AI-suggested matches, keyed by match id. Filled in from the catalog after
     /// the scan lands, so a suggestion shows the real dish instead of a placeholder tile.
     @Published var matchArtwork: [String: String] = [:]
@@ -202,6 +213,26 @@ final class AppStore: ObservableObject {
     /// Which recipe's shopping basket is open. "__manual__" is the hand-added bucket.
     @Published var basketID: String?
     @Published var toast = ""
+    @Published var showAIConsent = false
+    @Published var aiSharingAllowed = UserDefaults.standard.bool(forKey: "gs_ai_sharing_consent_v1") {
+        didSet { UserDefaults.standard.set(aiSharingAllowed, forKey: "gs_ai_sharing_consent_v1") }
+    }
+    private var pendingAIAction: (() -> Void)?
+
+    private func requestAIConsent(_ action: @escaping () -> Void) -> Bool {
+        guard !aiSharingAllowed else { return true }
+        pendingAIAction = action
+        showAIConsent = true
+        return false
+    }
+
+    func finishAIConsent(allow: Bool) {
+        aiSharingAllowed = allow
+        showAIConsent = false
+        let action = pendingAIAction
+        pendingAIAction = nil
+        if allow { action?() }
+    }
 
     // Persisted data
     @Published var recipes: [Recipe]
@@ -221,7 +252,7 @@ final class AppStore: ObservableObject {
     #endif
 
     /// Only ever true in a debug build with a key entered by hand. In release this is
-    /// constant false, so `analyze()` and friends fall through to the proxy or the mock.
+    /// constant false, so production requests require an authenticated proxy session.
     var liveAI: Bool {
         #if DEBUG
         !apiKey.trimmingCharacters(in: .whitespaces).isEmpty
@@ -251,6 +282,10 @@ final class AppStore: ObservableObject {
         // quota — it just hasn't got a person's name on it yet.
         guard isAuthenticated || isGuestSession else {
             showAuth(.aiFeature)
+            return false
+        }
+        guard aiToken != nil || liveAI else {
+            showToast("Your session is reconnecting. Please try again shortly.")
             return false
         }
         entitlement.rollOverIfNeeded()
@@ -344,6 +379,7 @@ final class AppStore: ObservableObject {
     /// Opens a specific reel in the feed — used by the profile grid.
     func openReel(_ reel: Reel) {
         reelFocusID = reel.id
+        communityTab = .videos
         go(to: .feed)
     }
 
@@ -493,6 +529,7 @@ final class AppStore: ObservableObject {
         }
     }
 
+    #if DEBUG
     func activate(_ plan: Entitlement.Plan, annual: Bool = false) {
         Haptics.notify(.success)
         let tookWelcome = entitlement.welcomeOfferActive
@@ -539,6 +576,15 @@ final class AppStore: ObservableObject {
         persistEntitlement()
         return (true, "\(bonus) AI actions added")
     }
+
+    func addTopUp(_ count: Int = 50) {
+        Haptics.notify(.success)
+        entitlement.topUp += count
+        persistEntitlement()
+        goBack()
+        showToast("\(count) extra AI actions added")
+    }
+    #endif
 
     private func persistEntitlement() {
         if let data = try? JSONEncoder().encode(entitlement) {
@@ -1716,6 +1762,7 @@ final class AppStore: ObservableObject {
     func analyze() {
         let t = importText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
+        guard requestAIConsent({ [weak self] in self?.analyze() }) else { return }
         guard useAIAction() else { return }
         let source = detect(t)
         if aiToken != nil {
@@ -1731,7 +1778,7 @@ final class AppStore: ObservableObject {
         }
         // Developer fallback only: a locally-entered key, used for testing without an account.
         guard liveAI else {
-            runMockExtraction(source: source)
+            handleAIError(RecipeExtractor.ProxyError.notSignedIn)
             return
         }
         let key = apiKey
@@ -1743,6 +1790,7 @@ final class AppStore: ObservableObject {
     /// Entry point from the shutter (or the photo picker): freeze the frame, then identify it.
     func scan(image: UIImage?) {
         guard let image else { return }
+        guard requestAIConsent({ [weak self] in self?.scan(image: image) }) else { return }
         guard canUseCamera else {
             showPaywall(.cameraIsPro)
             return
@@ -1754,16 +1802,18 @@ final class AppStore: ObservableObject {
             return
         }
         guard liveAI else {
-            runMockFoodScan()
+            handleAIError(RecipeExtractor.ProxyError.notSignedIn)
             return
         }
         runLiveFoodScan(image: image, apiKey: apiKey)
     }
 
+    #if DEBUG
     func scanMock() {
         guard useAIAction() else { return }
         runMockFoodScan()
     }
+    #endif
 
     /// Entry to the camera scanner. Needs an account first, then Pro.
     func startPhotoScan() {
@@ -1785,7 +1835,8 @@ final class AppStore: ObservableObject {
         go(to: .scanIdentify)
     }
 
-    /// Demo path (no API key): same staged reveal as the live scan so the flow is walkable.
+    #if DEBUG
+    /// Preview data is available only to development builds.
     private func runMockFoodScan() {
         beginIdentifying()
         Task { [weak self] in
@@ -1807,6 +1858,7 @@ final class AppStore: ObservableObject {
             self.finishIdentifying(with: analysis)
         }
     }
+    #endif
 
     /// Metered scan: the server holds the key, spends the action, and returns the balance.
     private func runLiveFoodScan(image: UIImage, token: String) {
@@ -1949,6 +2001,7 @@ final class AppStore: ObservableObject {
         }
 
         guard fetchingDish == nil else { return }
+        guard requestAIConsent({ [weak self] in self?.openScanMatch(match) }) else { return }
         // Writing a recipe is a second billable action on top of the scan.
         guard useAIAction() else { return }
         Haptics.tap(.medium)
@@ -1979,7 +2032,7 @@ final class AppStore: ObservableObject {
             return
         }
         guard liveAI else {
-            fetchMockRecipe(for: match)
+            handleAIError(RecipeExtractor.ProxyError.notSignedIn)
             return
         }
         let key = apiKey
@@ -1998,6 +2051,7 @@ final class AppStore: ObservableObject {
         }
     }
 
+    #if DEBUG
     private func fetchMockRecipe(for match: FoodScanMatch) {
         withAnimation(Self.lateralAnimation) { fetchingDish = match.dishName }
         Task { [weak self] in
@@ -2008,6 +2062,7 @@ final class AppStore: ObservableObject {
             self.presentFetched(recipe, for: match)
         }
     }
+    #endif
 
     /// Saves a freshly generated recipe into the library and opens it.
     private func presentFetched(_ fetched: Recipe, for match: FoodScanMatch) {
@@ -2216,6 +2271,7 @@ final class AppStore: ObservableObject {
         }
     }
 
+    #if DEBUG
     private func runMockExtraction(source: String) {
         withAnimation(Self.lateralAnimation) { importing = true }
         Task { [weak self] in
@@ -2228,6 +2284,7 @@ final class AppStore: ObservableObject {
             }
         }
     }
+    #endif
 
     func saveImport() {
         guard let r = preview else { return }
@@ -2246,6 +2303,7 @@ final class AppStore: ObservableObject {
         withAnimation(Self.sheetAnimation) { preview = nil }
     }
 
+    #if DEBUG
     static func mockRecipe(source: String) -> Recipe {
         Recipe(
             id: "r\(Int(Date().timeIntervalSince1970 * 1000))",
@@ -2282,6 +2340,8 @@ final class AppStore: ObservableObject {
         IngredientConfidence(name: "Spinach", percent: 4.4, grams: 15, image: "https://images.unsplash.com/photo-1576045057995-568f588f82fb?w=300&q=80"),
         IngredientConfidence(name: "Lettuce", percent: 4.2, grams: 15, image: "https://images.unsplash.com/photo-1622206151226-18ca2c9ab4a1?w=300&q=80"),
     ]
+
+    #endif
 
     // MARK: - Cook mode
 

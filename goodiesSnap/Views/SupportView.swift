@@ -53,7 +53,7 @@ struct SupportView: View {
     private var helpView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                header(title: "Chat support")
+                header(title: "Help & support")
 
                 Text("Related questions:")
                     .font(nunito(19, .extrabold))
@@ -87,7 +87,7 @@ struct SupportView: View {
                     HStack(spacing: 10) {
                         Image(systemName: "bubble.left.fill")
                             .font(.system(size: 14, weight: .bold))
-                        Text("Start a conversation")
+                        Text("Contact support")
                             .font(nunito(15, .extrabold))
                     }
                     .foregroundStyle(Color.gsFg)
@@ -112,7 +112,9 @@ struct SupportView: View {
 
     private func topicCard(_ topic: Topic) -> some View {
         Button {
-            openChat()
+            // A topic opens its most relevant answer; "Contact support" is for everything else.
+            let faqID = ["recipes": "save", "subscription": "cancel", "account": "delete", "importing": "actions"][topic.id]
+            withAnimation(AppStore.stepAnimation) { expandedFAQ = faqID }
         } label: {
             HStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 8) {

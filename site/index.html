@@ -191,6 +191,10 @@ h3 { font-size: 22px; letter-spacing: -0.015em; line-height: 1.2; }
 .pill-pro { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; background: var(--ink); color: var(--yellow); padding: 3px 9px; border-radius: 99px; vertical-align: middle; margin-left: 6px; }
 
 /* Gallery */
+.launch { padding: 40px 0 100px; }
+.launch .sec-head { margin-bottom: 40px; }
+.launch-video { display: block; width: 100%; max-width: 1040px; margin: 0 auto; aspect-ratio: 16 / 9; border-radius: 28px; background: #efece4; box-shadow: 0 30px 80px -30px rgba(30,26,16,0.35); }
+@media (max-width: 700px) { .launch { padding: 20px 0 70px; } .launch-video { border-radius: 18px; } }
 .gallery { background: var(--ink); color: #fff; padding: 110px 0 120px; border-radius: 48px; margin: 0 16px; }
 .gallery .sec-head { margin-bottom: 56px; }
 .gallery .lead { color: rgba(255,255,255,0.6); }
@@ -367,6 +371,20 @@ footer img { height: 34px; width: auto; filter: invert(1); }
       <span>Camera scan</span><span>YouTube</span><span>TikTok</span><span>Instagram</span><span>Recipe blogs</span><span>Pasted text</span><span>"Something spicy"</span>
       <span>Camera scan</span><span>YouTube</span><span>TikTok</span><span>Instagram</span><span>Recipe blogs</span><span>Pasted text</span><span>"Something spicy"</span>
     </div>
+  </div>
+</section>
+
+<section class="launch" id="watch">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="tag">Watch</div>
+      <h2>See it in 30 seconds.</h2>
+      <p class="lead">From a photo of a dish to a full recipe.</p>
+    </div>
+    <video class="launch-video reveal" controls playsinline preload="metadata" poster="assets/launch-poster.jpg">
+      <source src="assets/launch.mp4" type="video/mp4">
+      Your browser can't play this video.
+    </video>
   </div>
 </section>
 

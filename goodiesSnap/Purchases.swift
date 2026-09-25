@@ -94,10 +94,10 @@ final class Purchases: ObservableObject {
     }
 
     /// Localized price from StoreKit when available — never a hard-coded string, since the
-    /// real price varies by storefront. Falls back to the static label only offline.
+    /// real price varies by storefront. Never invent a price when products are unavailable.
     func priceLabel(for plan: Entitlement.Plan, annual: Bool) -> String {
         if let product = product(for: plan, annual: annual) { return product.displayPrice }
-        return annual ? plan.annualPriceLabel : plan.priceLabel
+        return loading ? "Loading" : "Unavailable"
     }
 
     // MARK: - Buying

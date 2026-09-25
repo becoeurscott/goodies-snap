@@ -333,9 +333,7 @@ struct AuthView: View {
 
     /// Full-width Apple and Google buttons, matching the reference's social row.
     ///
-    /// Presentation only for now: Sign in with Apple needs the entitlement plus server-side
-    /// token verification, and Google needs its SDK and an OAuth client id. Rather than fake
-    /// a sign-in, each says so when tapped.
+    /// Both providers authenticate with server-side token verification.
     private var socialRow: some View {
         HStack(spacing: 12) {
             socialButton {

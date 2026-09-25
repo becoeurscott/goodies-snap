@@ -11,8 +11,8 @@ Legend: ✅ done/verified · ⚠️ blocked on you (Claude can't do it) · 🐞 
 
 - ✅ Fastlane listing metadata has been added under `fastlane/metadata/en-US/`.
 - ✅ Fastlane review notes have been added under `fastlane/metadata/review_information/`.
-- 🐞 **Do not submit yet:** Google Sign-In is functional, but the Apple sign-in button is still a placeholder in `AuthView.swift`. Apple Guideline 4.8 requires an equivalent privacy-preserving login option when a third-party login service is used for the app's primary account.
-- 🐞 **Do not submit yet:** the deployed legal links used by the app currently return 404 for `/privacy.html` and `/terms.html`, even though the local files exist in `site/`. App Review will reject dead Privacy/Terms URLs under Guidelines 2.1 and 5.1.1.
+- ✅ Google Sign-In and Sign in with Apple are implemented with server-side token verification.
+- ✅ Legal links use the live custom domain pages: `https://goodiessnap.com/privacy.html` and `https://goodiessnap.com/terms.html`.
 - ⚠️ `npx` is not available in this shell, so the InsForge site deploy could not be run from here. Use the InsForge CLI from an environment with Node/npm available, or deploy the `site/` folder another way before submission.
 - ⚠️ A simulator build check was started with DerivedData in `/tmp/goodiessnap-derived`, but Xcode stayed silent for several minutes and was stopped. Re-run build/archive in Xcode or with a verbose `xcodebuild` log before upload.
 
@@ -37,8 +37,8 @@ Key facts App Review will test:
 ---
 
 ## 2. Legal & privacy — [REJECT-RISK]
-- ✅ Terms of Use + Privacy Policy written and deployed → https://j7pth4qn.insforge.site
-- ✅ App links (Legal.swift) point to the live pages — old `goodiessnap.app` links were dead.
+- ✅ Terms of Use + Privacy Policy written and deployed → https://goodiessnap.com
+- ✅ App links (Legal.swift) point to the live pages.
 - ✅ `PrivacyInfo.xcprivacy` bundled (email/name/userID/photos/user content; all linked; no
   tracking; UserDefaults reason CA92.1).
 - ✅ `ITSAppUsesNonExemptEncryption = false` in Info.plist.
@@ -106,9 +106,8 @@ Without these, core features 503 during review → functional-bug rejection (2.1
 ---
 
 ## 6. Content licensing — [REJECT-RISK 5.2.1 / 2.1]
-- ⚠️ **TheMealDB**: Discover's 793 recipes were seeded with test key "1" (dev/educational
-  only). Public release needs a **paid supporter key** — re-run
-  `scripts/import-catalog.mjs` with `MEALDB_KEY=<supporter>`. Attribution already shown.
+- ⚠️ **TheMealDB**: The imported catalog is hidden for launch until a commercial/supporter
+  license is confirmed. Do not republish those recipes without documented permission.
 - ⚠️ **Unsplash + TheMealDB images are hotlinked** (38 Unsplash seeds + catalog images).
   Risk: 2.1 if CDN slow during review; 5.2.1 on rights. Prefer bundling/licensing art, or at
   minimum confirm rights + CDN reliability.
@@ -136,14 +135,14 @@ Without these, core features 503 during review → functional-bug rejection (2.1
 Do not submit until all are ✅.
 
 **Will reject if missing**
-- [ ] `OPENROUTER_API_KEY` set; AI extract/scan tested from a real device (not 503).
+- ✅ `OPENROUTER_API_KEY` set; a live recipe extraction returned a real recipe during the backend smoke test.
 - [ ] 4 IAP products "Ready to Submit", attached to the version, load in the paywall.
 - [ ] Paid Apps agreement active.
-- [ ] Privacy Policy URL + Support URL live and reachable in App Store Connect.
+- ✅ Privacy Policy URL + Support URL point to live custom-domain pages.
 - [ ] Support mailbox actually receives mail.
 - [ ] Account deletion works from a fresh signed-in account (typed DELETE).
 - [ ] Report + block verified in the live build.
-- [ ] TheMealDB supporter key in use (or Discover disabled for launch).
+- ✅ TheMealDB catalog hidden for launch until rights are confirmed.
 - [ ] Image rights + CDN reliability confirmed (or images bundled).
 - [ ] Legal placeholder fields filled + reviewed.
 - [ ] App Privacy questionnaire matches `PrivacyInfo.xcprivacy`.

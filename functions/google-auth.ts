@@ -58,7 +58,7 @@ export default async function (req: Request) {
   const jwtSecret = Deno.env.get('JWT_SECRET');
   const googleClientID = Deno.env.get('GOOGLE_CLIENT_ID');
   const googleIOSClientID = Deno.env.get('GOOGLE_IOS_CLIENT_ID');
-  if (!baseURL || !adminKey || !anonKey || !jwtSecret)
+  if (!baseURL || !adminKey || !anonKey || !jwtSecret || (!googleClientID && !googleIOSClientID))
     return json({ error: 'server_not_configured' }, 503);
 
   let body: { id_token?: string; name?: string };
@@ -81,6 +81,9 @@ export default async function (req: Request) {
 
   const email = gUser.email as string | undefined;
   if (!email) return json({ error: 'no_email_in_token' }, 400);
+  if (gUser.email_verified !== true && gUser.email_verified !== 'true') {
+    return json({ error: 'email_not_verified' }, 401);
+  }
   const name = body.name || (gUser.name as string) || 'Cook';
   const googleSub = gUser.sub as string;
   const password = serverPassword(googleSub, adminKey);
@@ -88,12 +91,13 @@ export default async function (req: Request) {
 
   // 2. Look up existing user by email.
   const listRes = await fetch(
-    `${baseURL}/api/auth/users?email=${encodeURIComponent(email)}`,
+    `${baseURL}/api/auth/users?search=${encodeURIComponent(email)}&limit=100`,
     { headers: admin },
   );
-  const listBody = listRes.ok ? await listRes.json() : [];
+  if (!listRes.ok) return json({ error: 'account_lookup_failed' }, 503);
+  const listBody = await listRes.json();
   const users = Array.isArray(listBody) ? listBody : (listBody?.users ?? listBody?.data ?? []);
-  const existing = users[0];
+  const existing = users.find((user: { email?: string }) => user.email?.toLowerCase() === email.toLowerCase());
 
   let userId: string;
   let isNew = false;

@@ -144,12 +144,13 @@ export default async function (req: Request) {
   const name = 'Guest';
 
   const listRes = await fetch(
-    `${baseURL}/api/auth/users?email=${encodeURIComponent(email)}`,
+    `${baseURL}/api/auth/users?search=${encodeURIComponent(email)}&limit=100`,
     { headers: admin },
   );
-  const listBody = listRes.ok ? await listRes.json() : [];
+  if (!listRes.ok) return json({ error: 'account_lookup_failed' }, 503);
+  const listBody = await listRes.json();
   const users = Array.isArray(listBody) ? listBody : (listBody?.users ?? listBody?.data ?? []);
-  const existing = users[0];
+  const existing = users.find((user: { email?: string }) => user.email?.toLowerCase() === email.toLowerCase());
 
   let userId: string;
   let accessToken: string;
