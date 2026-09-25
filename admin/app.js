@@ -86,6 +86,9 @@ async function refreshSupportBadge() {
     const b = $("#supportBadge");
     b.textContent = waiting.length >= 100 ? "99+" : String(waiting.length);
     b.classList.toggle("hidden", waiting.length === 0);
+    const tb = $("#tabBadge");
+    tb.textContent = b.textContent;
+    tb.classList.toggle("hidden", waiting.length === 0);
   } catch { /* table not deployed yet */ }
 }
 
@@ -230,15 +233,43 @@ const ago = d => {
 };
 
 document.querySelectorAll("nav button").forEach(b =>
-  b.addEventListener("click", () => show(b.dataset.v)));
+  b.addEventListener("click", () => { closeDrawer(); show(b.dataset.v); }));
+
+// ---------- phone layout: drawer menu + bottom tab bar ----------
+const isPhone = () => matchMedia("(max-width: 820px)").matches;
+function openDrawer() {
+  document.body.classList.add("drawer-open");
+  $("#menuBtn").setAttribute("aria-expanded", "true");
+}
+function closeDrawer() {
+  document.body.classList.remove("drawer-open");
+  $("#menuBtn")?.setAttribute("aria-expanded", "false");
+}
+$("#menuBtn").addEventListener("click", openDrawer);
+$("#scrim").addEventListener("click", closeDrawer);
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
+document.querySelectorAll("#tabbar button").forEach(b => b.addEventListener("click", () =>
+  b.hasAttribute("data-more") ? openDrawer() : show(b.dataset.v)));
+
+// On phones, tables turn into cards; each cell shows its column name from the header.
+function labelTables(root) {
+  root.querySelectorAll("table").forEach(t => {
+    const heads = [...t.querySelectorAll("thead th")].map(th => th.textContent.trim());
+    if (!heads.length) return;
+    t.querySelectorAll("tbody tr").forEach(tr =>
+      [...tr.children].forEach((td, i) => { if (!td.hasAttribute("data-label") && heads[i]) td.setAttribute("data-label", heads[i]); }));
+  });
+}
+new MutationObserver(() => labelTables($("#view"))).observe($("#view"), { childList: true, subtree: true });
 
 // Views that poll register their timer here so leaving the view stops it.
 let viewTimer = null;
 
 async function show(v) {
   clearInterval(viewTimer); viewTimer = null;
-  document.querySelectorAll("nav button").forEach(b =>
+  document.querySelectorAll("nav button, #tabbar button[data-v]").forEach(b =>
     b.setAttribute("aria-current", String(b.dataset.v === v)));
+  window.scrollTo(0, 0);
   $("#title").textContent = TITLES[v][0];
   $("#subtitle").textContent = TITLES[v][1];
   $("#view").innerHTML = `<div class="spin">Loading…</div>`;
@@ -646,12 +677,13 @@ const VIEWS = {
       const ids = [...new Set(convs.map(c => c.user_id))];
       const people = ids.length ? await rows("profiles", `select=id,display_name&id=in.(${ids.join(",")})`).catch(() => []) : [];
       const names = Object.fromEntries(people.map(p => [p.id, p.display_name]));
-      if (!openId && convs.length) openId = convs[0].id;
+      // Desktop shows the newest conversation beside the list; a phone starts on the list.
+      if (!openId && convs.length && !isPhone()) openId = convs[0].id;
 
       $("#view").innerHTML = `
         <div class="toolbar">${FILTERS.map(([k, l]) => `<button class="fbtn" data-f="${k}" aria-pressed="${k === filter}">${l}</button>`).join("")}
           <div style="flex:1"></div><span class="note" style="color:var(--muted);font-size:12.5px">Refreshes every 10s</span></div>
-        <div class="inbox">
+        <div class="inbox${openId && isPhone() ? " detail" : ""}">
           <div class="card list">${convs.map(c => `
             <button class="conv" data-id="${c.id}" aria-current="${c.id === openId}">
               <div class="t"><span>${esc(names[c.user_id] || "Customer")}</span><span class="st st-${c.status}">${c.status.replace("_", " ")}</span>
@@ -669,6 +701,8 @@ const VIEWS = {
       document.querySelectorAll(".conv").forEach(b => b.addEventListener("click", () => {
         openId = b.dataset.id;
         document.querySelectorAll(".conv").forEach(x => x.setAttribute("aria-current", String(x === b)));
+        $(".inbox").classList.add("detail");
+        window.scrollTo(0, 0);
         renderPane(convs.find(c => c.id === openId), names);
       }));
       if (openId) renderPane(convs.find(c => c.id === openId), names);
@@ -686,6 +720,7 @@ const VIEWS = {
       const canAct = can("SUPPORT");
       pane.innerHTML = `
         <div class="panel-h" style="padding:14px 16px;margin:0;border-bottom:1px solid var(--line)">
+          <button class="pane-back" data-back aria-label="Back to conversations"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
           <h2 style="font-size:15px">${esc(names[conv.user_id] || "Customer")} <span class="st st-${conv.status}">${conv.status.replace("_", " ")}</span></h2>
           <span class="note">${esc(conv.app_id)}</span>
           ${canAct ? `<div style="margin-left:auto;display:flex;gap:8px">
@@ -700,6 +735,11 @@ const VIEWS = {
           <textarea class="search" id="reply" placeholder="Reply to the customer — they see it in the app with your name">${esc(draft)}</textarea>
           <button class="btn" id="send">Send</button></div>` : ""}`;
       const th = $("#thread"); th.scrollTop = th.scrollHeight;
+      pane.querySelector("[data-back]")?.addEventListener("click", () => {
+        openId = null;
+        $(".inbox").classList.remove("detail");
+        document.querySelectorAll(".conv").forEach(x => x.setAttribute("aria-current", "false"));
+      });
 
       pane.querySelectorAll("[data-st]").forEach(b => b.addEventListener("click", async () => {
         b.disabled = true;
