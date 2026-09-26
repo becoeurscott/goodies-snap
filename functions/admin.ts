@@ -19,12 +19,25 @@ import { createClient } from 'npm:@insforge/sdk';
 
 // Defence in depth: this function is already bearer-authed and admin-gated, but there's no
 // reason for any origin other than the control room to call it from a browser.
+// The control room is served from InsForge hosting; goodiessnap.com is kept for when it moves.
+const ALLOWED_ORIGINS = new Set([
+  'https://j7pth4qn.insforge.site',
+  'https://admin.goodiessnap.com',
+  'https://goodiessnap.com',
+  'https://www.goodiessnap.com',
+]);
 const CORS = {
-  'Access-Control-Allow-Origin': 'https://goodiessnap.com',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   'Vary': 'Origin',
 };
+
+/** Echoes the caller's origin back only when it is one of ours; anything else gets no CORS grant. */
+function withCors(res: Response, origin: string | null): Response {
+  const headers = new Headers(res.headers);
+  if (origin && ALLOWED_ORIGINS.has(origin)) headers.set('Access-Control-Allow-Origin', origin);
+  return new Response(res.body, { status: res.status, headers });
+}
 
 const BUCKET = 'post-images';
 const PLANS = new Set(['free', 'plus', 'pro']);
@@ -37,6 +50,7 @@ const ROLE_RANK: Record<string, number> = {
 // Minimum role required per action. Anything not listed defaults to SUPER_ADMIN (deny by
 // default for unknown actions).
 const PERMISSIONS: Record<string, string> = {
+  support_reply: 'SUPPORT', support_close: 'SUPPORT',
   set_plan: 'SUPPORT', add_top_up: 'SUPPORT', reset_quota: 'SUPPORT', set_trial: 'SUPPORT',
   hide_content: 'MODERATOR', delete_content: 'MODERATOR', delete_post: 'MODERATOR', delete_report: 'MODERATOR',
   catalog_upsert: 'ADMIN', catalog_delete: 'ADMIN', catalog_set_flags: 'ADMIN',
@@ -61,6 +75,10 @@ function json(body: unknown, status = 200) {
 }
 
 export default async function (req: Request) {
+  return withCors(await handle(req), req.headers.get('Origin'));
+}
+
+async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
 
@@ -434,6 +452,44 @@ export default async function (req: Request) {
     const res = await rest('broadcasts', { method: 'POST', body: JSON.stringify([row]) });
     if (!res.ok) { console.error('broadcast_create', res.status, await res.text()); return json({ error: 'save_failed' }, 502); }
     await audit('broadcast_create', 'broadcast', null, { title, kind: row.kind });
+    return json({ ok: true });
+  }
+
+  // ======================= SUPPORT INBOX =======================
+  // Customers talk to the `support` function; conversations it hands off land here with
+  // status needs_human. A reply from the team takes the conversation over (status human),
+  // so the assistant stays out of it; closing ends it (the next customer message starts
+  // a fresh conversation).
+
+  if (action === 'support_reply') {
+    const convId = body.conversationId;
+    const text = String(body.text || '').trim().slice(0, 4000);
+    if (!isUUID(convId)) return json({ error: 'missing_conversation' }, 400);
+    if (!text) return json({ error: 'empty_message' }, 400);
+    const conv = await getOne('support_conversations', `id=eq.${convId}&select=id,status`);
+    if (!conv) return json({ error: 'not_found' }, 404);
+    const now = new Date().toISOString();
+    const ins = await rest('support_messages', {
+      method: 'POST',
+      body: JSON.stringify([{ conversation_id: convId, sender: 'agent', author_id: callerId,
+        author_name: actorName || 'goodiesSnap team', body: text, created_at: now }]),
+    });
+    if (!ins.ok) { console.error('support_reply', ins.status, await ins.text()); return json({ error: 'save_failed' }, 502); }
+    await rest(`support_conversations?id=eq.${convId}`, {
+      method: 'PATCH', body: JSON.stringify({ status: 'human', last_message_at: now }),
+    });
+    await audit('support_reply', 'support_conversation', convId, { length: text.length });
+    return json({ ok: true });
+  }
+
+  if (action === 'support_close') {
+    const convId = body.conversationId;
+    if (!isUUID(convId)) return json({ error: 'missing_conversation' }, 400);
+    const res = await rest(`support_conversations?id=eq.${convId}`, {
+      method: 'PATCH', body: JSON.stringify({ status: 'closed' }),
+    });
+    if (!res.ok) return json({ error: 'save_failed' }, 502);
+    await audit('support_close', 'support_conversation', convId);
     return json({ ok: true });
   }
 

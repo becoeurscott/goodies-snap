@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SupportView: View {
     @EnvironmentObject var store: AppStore
+    @EnvironmentObject var social: SocialStore
     @State private var showChat = false
     @State private var expandedFAQ: String?
 
@@ -81,7 +82,9 @@ struct SupportView: View {
                 .glassCard(radius: 20, fill: 0.05, stroke: 0.1)
                 .padding(.top, 14)
 
-                Link(destination: Legal.support) {
+                Button {
+                    withAnimation(AppStore.navAnimation) { showChat = true }
+                } label: {
                     HStack(spacing: 10) {
                         Image(systemName: "bubble.left.fill")
                             .font(.system(size: 14, weight: .bold))
@@ -94,8 +97,8 @@ struct SupportView: View {
                 .buttonStyle(DarkButtonStyle())
                 .padding(.top, 24)
 
-                Link(destination: Legal.support) {
-                    Text("Or email us at contact@goodiessnap.com")
+                Button { emailSupport() } label: {
+                    Text(verbatim: "Or email us at contact@goodiessnap.com")
                         .font(nunito(12, .semibold))
                         .foregroundStyle(Color.fg(0.45))
                         .frame(maxWidth: .infinity)
@@ -180,20 +183,47 @@ struct SupportView: View {
 
     // MARK: - Chat
 
-    private struct ChatMessage: Identifiable {
-        let id = UUID()
+    private struct ChatMessage: Identifiable, Equatable {
+        var id = UUID().uuidString
         let text: String
         let isBot: Bool
         let time: String
+        var author: String? = nil
     }
+
+    private static let greeting = ChatMessage(
+        id: "greeting",
+        text: "Hey! 👋 I'm the goodiesSnap assistant. Ask me anything about recipes, your plan or how things work. If I can't help, I'll pass you to the team.",
+        isBot: true, time: "now")
 
     @State private var chatText = ""
     @State private var sending = false
-    @State private var messages: [ChatMessage] = [
-        ChatMessage(text: "Hey! 👋 I'm your goodiesSnap assistant. Ask me anything about recipes, subscriptions, meal planning, or how things work in the app.", isBot: true, time: "now")
-    ]
+    @State private var messages: [ChatMessage] = [SupportView.greeting]
+    /// "ai", "needs_human" or "human" — shown in the header so people know who's answering.
+    @State private var status = "ai"
+    @State private var loadedHistory = false
+
+    private var statusLine: String {
+        switch status {
+        case "needs_human": return "Passed to the team · we'll reply here"
+        case "human": return "Chatting with the team"
+        default: return "Assistant · replies can take up to a minute"
+        }
+    }
 
     private var chatView: some View {
+        chatBody
+            .task { await loadHistory() }
+            .task {
+                // Team replies arrive from the admin console; check for them while the chat is open.
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(15))
+                    if !sending { await loadHistory() }
+                }
+            }
+    }
+
+    private var chatBody: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Button {
@@ -213,7 +243,7 @@ struct SupportView: View {
                         .font(nunito(16, .extrabold))
                     HStack(spacing: 5) {
                         Circle().fill(Color.green).frame(width: 7, height: 7)
-                        Text("Online")
+                        Text(statusLine)
                             .font(nunito(11, .semibold))
                             .foregroundStyle(Color.fg(0.5))
                     }
@@ -323,6 +353,11 @@ struct SupportView: View {
             }
 
             VStack(alignment: msg.isBot ? .leading : .trailing, spacing: 4) {
+                if let author = msg.author {
+                    Text(author)
+                        .font(nunito(10.5, .extrabold))
+                        .foregroundStyle(Color.gsAccentInk)
+                }
                 Text(msg.text)
                     .font(nunito(13.5, .semibold))
                     .foregroundStyle(msg.isBot ? Color.gsFg : .white)
@@ -344,140 +379,72 @@ struct SupportView: View {
         .frame(maxWidth: .infinity, alignment: msg.isBot ? .leading : .trailing)
     }
 
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "h:mm a"; return f
+    }()
+
+    private static func chatMessage(_ m: SupportAPI.Message) -> ChatMessage {
+        let date = ISO8601DateFormatter.withFractional.date(from: m.created_at)
+            ?? ISO8601DateFormatter().date(from: m.created_at)
+        return ChatMessage(id: m.id, text: m.body, isBot: m.sender != "user",
+                           time: date.map { timeFormatter.string(from: $0) } ?? "",
+                           author: m.sender == "agent" ? (m.author_name ?? "goodiesSnap team") : nil)
+    }
+
+    /// A token for the support function: the signed-in session, or a guest session so
+    /// people can get help before they have an account.
+    private func supportToken() async -> String? {
+        if social.session == nil { _ = await social.startGuestSessionIfNeeded() }
+        return social.session?.accessToken
+    }
+
+    private func loadHistory() async {
+        guard let token = await supportToken(),
+              let payload = try? await SupportAPI.history(token: token) else { return }
+        if let conv = payload.conversation { status = conv.status }
+        let server = payload.messages.map(Self.chatMessage)
+        if !server.isEmpty { messages = [Self.greeting] + server }
+        loadedHistory = true
+    }
+
     private func sendMessage() {
-        let text = chatText.trimmingCharacters(in: .whitespaces)
+        let text = chatText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !sending else { return }
 
-        let formatter = DateFormatter()
-        formatter.dateFormat = "h:mm a"
-        let time = formatter.string(from: Date())
-
-        messages.append(ChatMessage(text: text, isBot: false, time: time))
+        let pending = ChatMessage(text: text, isBot: false, time: Self.timeFormatter.string(from: Date()))
+        messages.append(pending)
         chatText = ""
         sending = true
         Haptics.tap(.light)
 
         Task {
-            let reply = await callSupportAI()
-            sending = false
-            messages.append(ChatMessage(text: reply, isBot: true, time: formatter.string(from: Date())))
+            defer { sending = false }
+            guard let token = await supportToken() else {
+                messages.append(ChatMessage(text: "We couldn't connect you just now. Check your internet and try again, or email contact@goodiessnap.com.", isBot: true, time: Self.timeFormatter.string(from: Date())))
+                return
+            }
+            do {
+                let payload = try await SupportAPI.send(text, token: token)
+                if let conv = payload.conversation { status = conv.status }
+                // Swap the optimistic bubble for the stored copy, then add the reply.
+                messages.removeAll { $0.id == pending.id }
+                for m in payload.messages.map(Self.chatMessage) where !messages.contains(where: { $0.id == m.id }) {
+                    messages.append(m)
+                }
+            } catch {
+                messages.append(ChatMessage(text: "That didn't go through. Try again in a moment, or email contact@goodiessnap.com.", isBot: true, time: Self.timeFormatter.string(from: Date())))
+            }
         }
     }
 
-    // MARK: - Claude AI support
-
-    private static let supportSystemPrompt = """
-    You are the goodiesSnap support assistant — a friendly, helpful AI built into the goodiesSnap iOS recipe app.
-
-    About the app:
-    - goodiesSnap lets users save recipes from links, YouTube videos, photos, or typed text using AI
-    - The AI reads the input and creates a clean recipe card with ingredients, steps, cook time, and nutrition
-    - Users can plan meals for the week by dropping recipes onto days in the Plan tab
-    - The shopping list builds itself from planned meals, sorted by aisle
-    - Users can discover recipes in the Discover tab (browse by cuisine, food type, cook time, calories)
-    - The Community tab shows a TikTok-style reel feed where users share food posts
-    - Recipes can be cooked step-by-step with built-in timers (Cook mode)
-
-    Features:
-    - Save recipe: tap + on Home → paste link, YouTube URL, type text, or snap a photo
-    - Meal planner: Plan tab → tap a day → add recipes → shopping list auto-generates
-    - Shopping list: Shopping tab → check off items as you shop
-    - Discover: browse 700+ recipes by cuisine, food type, cook time, calories
-    - Community: vertical reel feed of food posts from other users
-    - Cook mode: step-by-step cooking with timers, hands-free
-    - Profile: edit name, view stats, manage subscription
-
-    Subscription plans:
-    - Free: 5 AI actions per month
-    - Plus: 100 AI actions per month
-    - Pro: 400 AI actions per month
-    - AI actions are consumed when importing a recipe (reading a link/photo/text)
-    - To cancel: iPhone Settings → your name → Subscriptions → goodiesSnap
-
-    Account:
-    - Sign in with email/password or Google
-    - Disconnect (sign out): Profile → bottom of screen → Disconnect (signs out, keeps account)
-    - Delete account: Profile → Privacy & legal → Delete my account (permanent, removes posts/comments)
-    - Recipes saved on the device stay on the device even after deletion
-
-    Rules:
-    - Keep answers short (2-4 sentences max), warm, and helpful
-    - Use simple language, no technical jargon
-    - If you don't know something specific, suggest emailing contact@goodiessnap.com
-    - Never make up features that don't exist
-    - Never ask for passwords, payment info, or personal data
-    - You can use one emoji per reply max
-    """
-
-    private func callSupportAI() async -> String {
-        let key = store.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else {
-            return "I'm not able to connect right now. For help, email us at contact@goodiessnap.com 💛"
-        }
-
-        let provider = RecipeExtractor.Provider.forKey(key)
-        let history: [[String: Any]] = messages.compactMap { msg in
-            guard msg.text != messages.first?.text else { return nil }
-            return ["role": msg.isBot ? "assistant" : "user", "content": msg.text]
-        }
-
-        var request: URLRequest
-        var body: [String: Any]
-
-        switch provider {
-        case .anthropic:
-            request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
-            request.setValue(key, forHTTPHeaderField: "x-api-key")
-            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-            body = [
-                "model": "claude-haiku-4-5-20251001",
-                "max_tokens": 300,
-                "system": Self.supportSystemPrompt,
-                "messages": history,
-            ]
-
-        case .openRouter:
-            request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
-            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-            request.setValue("https://goodiessnap.com", forHTTPHeaderField: "HTTP-Referer")
-            request.setValue("goodiesSnap", forHTTPHeaderField: "X-Title")
-            body = [
-                "model": "anthropic/claude-haiku-4-5-20251001",
-                "max_tokens": 300,
-                "messages": [["role": "system", "content": Self.supportSystemPrompt]] + history,
-            ]
-        }
-
-        request.httpMethod = "POST"
-        request.timeoutInterval = 30
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        do {
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-            let (data, response) = try await URLSession.shared.data(for: request)
-
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return "Something went wrong. Try again or email contact@goodiessnap.com 💛"
+    /// Opens the mail app. Many people have no Mail account set up (Gmail users especially),
+    /// in which case `mailto:` silently does nothing — so copy the address and say so.
+    private func emailSupport() {
+        UIApplication.shared.open(Legal.support) { opened in
+            if !opened {
+                UIPasteboard.general.string = "contact@goodiessnap.com"
+                store.showToast("Email address copied")
             }
-
-            switch provider {
-            case .anthropic:
-                if let content = json["content"] as? [[String: Any]],
-                   let text = content.first?["text"] as? String {
-                    return text
-                }
-            case .openRouter:
-                if let choices = json["choices"] as? [[String: Any]],
-                   let message = choices.first?["message"] as? [String: Any],
-                   let text = message["content"] as? String {
-                    return text
-                }
-            }
-
-            return "I couldn't process that. Try rephrasing or email contact@goodiessnap.com 💛"
-        } catch {
-            return "Connection issue — check your internet and try again, or email contact@goodiessnap.com 💛"
         }
     }
 
@@ -506,4 +473,14 @@ struct SupportView: View {
             Color.clear.frame(width: 42, height: 42)
         }
     }
+}
+
+
+extension ISO8601DateFormatter {
+    /// Server timestamps carry milliseconds ("2026-09-25T13:40:25.243Z").
+    static let withFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
 }

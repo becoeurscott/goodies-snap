@@ -9,11 +9,19 @@
 /* Begin PBXBuildFile section */
 		E55FFC553060291F00C0684B /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = GS_GIDSDK_PROD /* GoogleSignIn */; };
 		E5FFB7FA304F93E30029F635 /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E5FFB7F9304F93E30029F635 /* StoreKit.framework */; };
+		GS_SRC_SOCIALSERVICE /* SocialService.swift in Sources */ = {isa = PBXBuildFile; fileRef = GS_FILE_SOCIALSERVICE /* SocialService.swift */; };
+		GS_SRC_SOCIALSTORE /* SocialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = GS_FILE_SOCIALSTORE /* SocialStore.swift */; };
+		GS_SRC_SCANPHOTO /* ScanPhotoStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = GS_FILE_SCANPHOTO /* ScanPhotoStore.swift */; };
+		GS_SRC_WEEKPLANNER /* WeekPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = GS_FILE_WEEKPLANNER /* WeekPlanner.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		E5FFB7F9304F93E30029F635 /* StoreKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = StoreKit.framework; path = System/Library/Frameworks/StoreKit.framework; sourceTree = SDKROOT; };
 		GS00000000000000000002 /* goodiesSnap.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = goodiesSnap.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		GS_FILE_SOCIALSERVICE /* SocialService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = goodiesSnap/SocialService.swift; sourceTree = "<group>"; };
+		GS_FILE_SOCIALSTORE /* SocialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = goodiesSnap/SocialStore.swift; sourceTree = "<group>"; };
+		GS_FILE_SCANPHOTO /* ScanPhotoStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = goodiesSnap/ScanPhotoStore.swift; sourceTree = "<group>"; };
+		GS_FILE_WEEKPLANNER /* WeekPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = goodiesSnap/WeekPlanner.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -158,6 +166,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				GS_SRC_SOCIALSERVICE /* SocialService.swift in Sources */,
+				GS_SRC_SOCIALSTORE /* SocialStore.swift in Sources */,
+				GS_SRC_SCANPHOTO /* ScanPhotoStore.swift in Sources */,
+				GS_SRC_WEEKPLANNER /* WeekPlanner.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

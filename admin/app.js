@@ -75,6 +75,9 @@ function enter() {
     b.hidden = !can(b.dataset.min);
   });
   show("overview");
+  // Show how many support conversations are waiting for a person.
+  rows("support_conversations", "select=id&status=eq.needs_human&limit=100")
+    .then(r => updateSupportBadge(r.length)).catch(() => {});
 }
 
 $("#go").addEventListener("click", signIn);
@@ -193,6 +196,7 @@ const TITLES = {
   users:    ["Members", "Accounts, plans and quota"],
   posts:    ["Community", "Posts people have shared"],
   reports:  ["Moderation", "Reported content awaiting a decision"],
+  support:  ["Support", "Conversations the assistant handed to the team"],
   catalog:  ["Catalog", "The Discover recipe collection"],
   subs:     ["Subscriptions", "Apple subscription bindings"],
   groups:   ["Groups", "Community groups"],
@@ -553,6 +557,40 @@ const VIEWS = {
       }));
     };
     render();
+  },
+
+  async support() {
+    const convs = await rows("support_conversations",
+      "select=id,user_id,status,handoff_reason,subject,last_message_at,created_at&order=last_message_at.desc&limit=200");
+    const uids = [...new Set(convs.map(c => c.user_id))];
+    const names = uids.length
+      ? Object.fromEntries((await rows("profiles", `select=id,display_name&id=in.(${uids.join(",")})`).catch(() => []))
+          .map(p => [p.id, p.display_name]))
+      : {};
+    const rank = { needs_human: 0, human: 1, ai: 2, closed: 3 };
+    convs.sort((a, b) => (rank[a.status] - rank[b.status]) || (new Date(b.last_message_at) - new Date(a.last_message_at)));
+    const waiting = convs.filter(c => c.status === "needs_human").length;
+    updateSupportBadge(waiting);
+    const label = { needs_human: "waiting for you", human: "with the team", ai: "assistant", closed: "closed" };
+    const why = { customer_asked: "asked for a person", sensitive_topic: "billing / account", low_confidence: "assistant unsure",
+      ai_unavailable: "assistant offline", rate_limited: "rate limited", assistant_disabled: "assistant off" };
+
+    $("#view").innerHTML = `<div class="card panel"><div class="panel-h"><h2>Conversations</h2>
+      <span class="note">${waiting} waiting · ${convs.length} total</span></div><div class="tw"><table>
+      <thead><tr><th>Customer</th><th>Subject</th><th>Status</th><th>Last message</th></tr></thead><tbody>
+      ${convs.map(c => `<tr data-cid="${c.id}" style="cursor:pointer">
+          <td><strong>${esc(names[c.user_id] || "Guest")}</strong></td>
+          <td>${esc((c.subject || "").slice(0, 80))}</td>
+          <td><span class="pill ${c.status === "needs_human" ? "p-pro" : "p-free"}">${label[c.status] || c.status}</span>
+            ${c.handoff_reason ? `<br><span style="color:var(--muted)">${why[c.handoff_reason] || esc(c.handoff_reason)}</span>` : ""}</td>
+          <td class="num" style="color:var(--muted)">${ago(c.last_message_at)}</td>
+        </tr>`).join("") || `<tr><td colspan="4" class="empty">No support conversations yet</td></tr>`}
+      </tbody></table></div></div>
+      <div id="supThread"></div>`;
+
+    document.querySelectorAll("[data-cid]").forEach(tr => tr.addEventListener("click", () =>
+      openSupportThread(convs.find(c => c.id === tr.dataset.cid), names)));
+    if (convs[0] && convs[0].status === "needs_human") openSupportThread(convs[0], names);
   },
 
   async reports() {
@@ -1029,6 +1067,51 @@ function exportCSV(filename, rows, columns) {
 }
 
 // Per-user detail: plan/quota levers, their posts, AI usage and subscription.
+// ---------- support inbox ----------
+function updateSupportBadge(n) {
+  const b = document.getElementById("supBadge");
+  if (!b) return;
+  b.textContent = n;
+  b.style.display = n > 0 ? "" : "none";
+}
+
+async function openSupportThread(conv, names) {
+  const box = $("#supThread");
+  if (!conv || !box) return;
+  box.innerHTML = `<div class="card panel" style="margin-top:16px"><div class="spin">Loading…</div></div>`;
+  const msgs = await rows("support_messages",
+    `select=sender,author_name,body,created_at&conversation_id=eq.${conv.id}&order=created_at.asc&limit=500`);
+  const who = m => m.sender === "user" ? esc(names[conv.user_id] || "Customer")
+    : m.sender === "agent" ? esc(m.author_name || "Team") : "Assistant";
+  box.innerHTML = `<div class="card panel" style="margin-top:16px">
+    <div class="panel-h"><h2>${esc(names[conv.user_id] || "Guest")}</h2>
+      ${conv.status !== "closed" && can("SUPPORT") ? `<button class="link" id="supClose">Close conversation</button>` : ""}</div>
+    <div style="display:flex;flex-direction:column;gap:10px;max-height:420px;overflow:auto;padding:4px 2px">
+      ${msgs.map(m => `<div style="align-self:${m.sender === "user" ? "flex-start" : "flex-end"};max-width:75%">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:3px">${who(m)} · ${ago(m.created_at)}</div>
+        <div style="padding:10px 13px;border-radius:14px;white-space:pre-wrap;background:${m.sender === "user" ? "rgba(255,255,255,.06)" : m.sender === "agent" ? "rgba(253,230,4,.16)" : "rgba(255,255,255,.03)"}">${esc(m.body)}</div>
+      </div>`).join("")}
+    </div>
+    ${conv.status !== "closed" && can("SUPPORT") ? `<div style="display:flex;gap:10px;margin-top:14px">
+      <textarea id="supReply" rows="3" placeholder="Write a reply — the customer sees it in the app's support chat"
+        style="flex:1;resize:vertical;padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:inherit;font:inherit"></textarea>
+      <button class="btn" id="supSend" style="align-self:flex-end">Send reply</button></div>` : ""}
+  </div>`;
+  const send = document.getElementById("supSend");
+  if (send) send.addEventListener("click", async () => {
+    const text = document.getElementById("supReply").value.trim();
+    if (!text) return;
+    send.disabled = true; send.textContent = "Sending…";
+    try { await adminFn({ action: "support_reply", conversationId: conv.id, text }); await show("support"); }
+    catch (e) { send.disabled = false; send.textContent = "Send reply"; alert("Couldn't send: " + e.message); }
+  });
+  const close = document.getElementById("supClose");
+  if (close) close.addEventListener("click", async () => {
+    try { await adminFn({ action: "support_close", conversationId: conv.id }); await show("support"); }
+    catch (e) { alert("Couldn't close: " + e.message); }
+  });
+}
+
 async function openUserDetail(uid, name) {
   $("#title").textContent = name || "Member";
   $("#subtitle").textContent = "Member detail";
