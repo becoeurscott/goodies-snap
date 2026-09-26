@@ -195,7 +195,8 @@ struct ReelsView: View {
     }
 
     private func startCompose() {
-        guard social.session != nil else { store.showAuth(.community); return }
+        // Posting needs a real account: guests haven't accepted the Terms or the 13+ age check.
+        guard social.signedIn else { store.showAuth(.community); return }
         Haptics.tap(.medium)
         social.composingReel = true
     }
@@ -215,6 +216,7 @@ private struct ReelCell: View {
 
     /// Flips true once the player has a real frame on screen, lifting the poster.
     @State private var videoReady = false
+    @State private var confirmDelete = false
 
     private var liked: Bool { social.isReelLiked(reel) }
     private var isMine: Bool { reel.authorID == social.session?.userID }
@@ -266,6 +268,14 @@ private struct ReelCell: View {
                     .background(ReelStyle.glassCircle(42))
                     .allowsHitTesting(false)
             }
+        }
+        .confirmationDialog("Delete this reel?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                social.deleteReel(reel)
+                store.showToast("Reel deleted")
+            }
+        } message: {
+            Text("It will be removed from the community for everyone.")
         }
         .contentShape(Rectangle())
         // Tap toggles sound on video pages; a photo page has no audio, so tapping does nothing.
@@ -440,7 +450,7 @@ private struct ReelCell: View {
             if reel.isCommunity {
                 railButton(system: "bubble.right.fill", tint: .white,
                            count: reel.commentCount) {
-                    guard social.session != nil else { store.showAuth(.community); return }
+                    guard social.signedIn else { store.showAuth(.community); return }
                     social.openReelComments(reel)
                 }
             }
@@ -462,8 +472,7 @@ private struct ReelCell: View {
 
             railButton(system: "ellipsis", tint: .white) {
                 if isMine {
-                    social.deleteReel(reel)
-                    store.showToast("Reel deleted")
+                    confirmDelete = true
                 } else if let post = reel.post {
                     social.startReport(.post(post))
                 } else {

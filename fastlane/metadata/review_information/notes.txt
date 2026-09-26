@@ -1,17 +1,21 @@
-Goodies Snap is a food and recipe app with AI-powered recipe capture, meal planning, shopping lists, subscriptions, and a moderated community feed.
+Goodies Snap is a food and recipe app with AI-powered recipe capture, meal planning, shopping lists, subscriptions, a moderated community (video reels and posts), and in-app support chat.
+
+Sign-in:
+The app can be used without an account: onboarding starts a guest session so recipes, scans and the plan work straight away. Guests can browse the community but cannot post, comment or share until they create a real account. Accounts can be created with email/password, Sign in with Apple, or Google. The demo account above is an email/password account.
 
 Suggested review flow:
-1. Sign in with the demo account above, or create a new email/password account.
-2. Open Import to test recipe capture from text, link, or photo.
-3. Open the paywall from a gated AI feature to review Plus and Pro subscription options.
-4. Open Community to view posts, comments, reporting, and blocking controls.
-5. Open Profile > Privacy & legal to review account deletion, Terms, and Privacy links.
+1. Sign in with the demo account above (or create an account with email, Apple or Google).
+2. Open Import to test recipe capture from text, link, or photo. The first AI use shows a consent sheet naming the AI providers.
+3. Open the paywall from a gated AI feature to review Plus and Pro subscriptions (price, renewal terms, Restore purchases, Terms and Privacy links).
+4. Open the Community tab: a vertical reel feed of user videos/photos and recipe videos. Each reel's "..." button reports it (or deletes your own); authors can be blocked from their profile. Posts and comments can also be reported.
+5. Open Profile > Help & support to use the support chat: an AI assistant answers first and hands the conversation to our team for refunds, account issues, or when the user asks for a person.
+6. Open Profile > Privacy & legal to review account deletion, Terms, and Privacy links.
 
 Community safety:
-Users must accept the Terms, Privacy Policy, and community rules before creating an account. Posts and comments can be reported, users can be blocked, and account deletion is available in the app.
+Creating an account requires accepting the Terms, Privacy Policy, and community rules and confirming the user is 13 or older. There is no tolerance for objectionable content or abusive users. Reported content is reviewed by our team within 24 hours, reported users can be blocked, and content from blocked users is hidden immediately.
 
 AI and nutrition note:
 AI recipe and nutrition outputs are estimates. Users are told to verify allergens, ingredients, cooking temperatures, and food safety.
 
 Important submission note:
-Before submitting, confirm that the Privacy Policy URL is live, all four auto-renewable subscription products are ready to submit in App Store Connect, and the AI backend keys are configured so review can test the core recipe features.
+Privacy Policy and Terms are live at goodiessnap.com. The four auto-renewable products are configured with StoreKit 2 and must be attached to this version for review. The AI backend is live and the review account can test recipe extraction from text, links, and photos.

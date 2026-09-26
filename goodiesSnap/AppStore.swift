@@ -559,24 +559,6 @@ final class AppStore: ObservableObject {
         showToast("Pro unlocked for \(Promo.trialDays) days · \(Promo.trialActions) actions")
     }
 
-    /// Redeems a promo code for bonus actions. Returns a message for the sheet to show.
-    func redeem(code raw: String) -> (ok: Bool, message: String) {
-        let code = raw.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        guard !code.isEmpty else { return (false, "Enter a code first") }
-        guard !entitlement.redeemed.contains(code) else {
-            return (false, "You've already used that code")
-        }
-        guard let bonus = Promo.bonus(forCode: code) else {
-            Haptics.notify(.error)
-            return (false, "That code isn't valid")
-        }
-        Haptics.notify(.success)
-        entitlement.redeemed.append(code)
-        entitlement.topUp += bonus
-        persistEntitlement()
-        return (true, "\(bonus) AI actions added")
-    }
-
     func addTopUp(_ count: Int = 50) {
         Haptics.notify(.success)
         entitlement.topUp += count

@@ -325,7 +325,7 @@ final class SocialStore: ObservableObject {
     }
 
     func share(recipe: Recipe, caption: String) async -> Bool {
-        guard session != nil else { return false }
+        guard signedIn else { return false }
         busy = true
         defer { busy = false }
         var shared = recipe
@@ -443,7 +443,7 @@ final class SocialStore: ObservableObject {
     /// Uploads a clip and publishes it as a reel, prepended to the feed.
     func publishReel(videoData: Data, thumbnail: UIImage?, caption: String,
                      recipe: Recipe?, duration: Int?) async -> Bool {
-        guard session != nil else { return false }
+        guard signedIn else { return false }
         reelUploading = true
         defer { reelUploading = false }
         do {
@@ -650,7 +650,7 @@ final class SocialStore: ObservableObject {
 
     /// Publish a general post from the composer. Uploads the photo first if present.
     func publish(text: String, image: UIImage?, recipe: Recipe?, groupID: String?, asQuestion: Bool) async -> Bool {
-        guard session != nil else { return false }
+        guard signedIn else { return false }
         let caption = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !caption.isEmpty || image != nil || recipe != nil else { return false }
         busy = true
@@ -728,7 +728,7 @@ final class SocialStore: ObservableObject {
     }
 
     func addComment(_ body: String) async {
-        guard session != nil, let post = commentsFor else { return }
+        guard signedIn, let post = commentsFor else { return }
         let text = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         do {

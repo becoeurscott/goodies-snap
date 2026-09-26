@@ -48,7 +48,7 @@ struct PaywallView: View {
         if !offer.annual, store.entitlement.welcomeOfferActive, let intro = Promo.introPrice(for: offer.plan) {
             text = "\(offer.name) is \(intro) for the first month, then \(offer.price) per month, renewing automatically until you cancel. "
         }
-        text += "Payment is charged to your Apple account. Cancel any time in Settings > Apple ID > Subscriptions, at least 24 hours before the renewal date. Recipes you've saved stay yours on any plan."
+        text += "Payment is charged to your Apple account. Cancel any time in Settings > Apple Account > Subscriptions, at least 24 hours before the renewal date. Recipes you've saved stay yours on any plan."
         return text
     }
 
@@ -482,74 +482,3 @@ struct PlanTabCard: View {
 }
 
 
-/// Promo-code entry. Codes grant one-off bonus actions.
-#if DEBUG
-struct PromoCodeSheet: View {
-    @EnvironmentObject var store: AppStore
-    @Environment(\.dismiss) private var dismiss
-    @State private var code = ""
-    @State private var message = ""
-    @State private var ok = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Redeem a code")
-                .font(nunito(24, .black))
-                .padding(.top, 26)
-            Text("Promo codes add extra AI actions to your account.")
-                .font(nunito(13, .semibold))
-                .foregroundStyle(Color.gsMuted)
-                .padding(.top, 6)
-
-            TextField("", text: $code, prompt: Text("Enter your code").foregroundStyle(Color.fg(0.35)))
-                .font(nunito(16, .extrabold))
-                .textInputAutocapitalization(.characters)
-                .autocorrectionDisabled()
-                .padding(.horizontal, 16)
-                .frame(minHeight: 54)
-                .background(Color.gsFill)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .padding(.top, 22)
-
-            if !message.isEmpty {
-                HStack(spacing: 7) {
-                    Image(systemName: ok ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                        .font(.system(size: 13, weight: .bold))
-                    Text(message).font(nunito(12.5, .bold))
-                }
-                .foregroundStyle(ok ? Color.gsPeach : Color.gsMuted)
-                .padding(.top, 10)
-            }
-
-            Button {
-                let result = store.redeem(code: code)
-                ok = result.ok
-                message = result.message
-                if result.ok { code = "" }
-            } label: {
-                Text("Redeem")
-                    .font(nunito(15, .extrabold))
-                    .foregroundStyle(Color.gsFg)
-                    .frame(maxWidth: .infinity, minHeight: 52)
-            }
-            .buttonStyle(DarkButtonStyle())
-            .padding(.top, 18)
-
-            Button { dismiss() } label: {
-                Text("Done")
-                    .font(nunito(13.5, .extrabold))
-                    .foregroundStyle(Color.gsMuted)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 4)
-
-            Spacer()
-        }
-        .padding(.horizontal, 24)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.gsBg)
-        .presentationDetents([.height(380)])
-    }
-}
-#endif
