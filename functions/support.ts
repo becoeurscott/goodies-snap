@@ -39,6 +39,10 @@ const RATE_PER_WINDOW = 20;
 const RATE_PER_DAY = 150;
 
 const HISTORY_TURNS = 8;
+// A chat with no messages for this long is closed and the next message starts a fresh one.
+// Conversations waiting for the team (needs_human) are never reset: someone still owes a reply.
+// Override with the SUPPORT_IDLE_RESET_HOURS secret.
+const IDLE_RESET_HOURS = Number(Deno.env.get('SUPPORT_IDLE_RESET_HOURS') ?? '24') || 24;
 const TOP_ARTICLES = 3;
 // Cosine similarity below this is noise for nomic-embed-text; such articles are left out.
 // Kept low on purpose: a marginal article costs a few prompt tokens, a missing one costs
@@ -346,10 +350,18 @@ async function handle(req: Request): Promise<Response> {
   }
 
   const MSG_FIELDS = 'id,sender,author_name,body,created_at';
-  const currentConversation = async () =>
-    (await select<{ id: string; status: string }>(
-      `support_conversations?app_id=eq.${appId}&user_id=eq.${userId}&select=id,status&order=last_message_at.desc&limit=1`,
+  const currentConversation = async () => {
+    const conv = (await select<{ id: string; status: string; last_message_at: string }>(
+      `support_conversations?app_id=eq.${appId}&user_id=eq.${userId}&select=id,status,last_message_at&order=last_message_at.desc&limit=1`,
     ))[0] ?? null;
+    if (!conv || conv.status === 'closed' || conv.status === 'needs_human') return conv;
+    const idleHours = (Date.now() - Date.parse(conv.last_message_at)) / 3_600_000;
+    if (idleHours >= IDLE_RESET_HOURS) {
+      await patch('support_conversations', `id=eq.${conv.id}`, { status: 'closed' });
+      return { ...conv, status: 'closed' };
+    }
+    return conv;
+  };
 
   try {
     const app = (await select<Record<string, string | boolean>>(
@@ -360,7 +372,7 @@ async function handle(req: Request): Promise<Response> {
     // ======================= HISTORY =======================
     if (body.action === 'history') {
       const conv = await currentConversation();
-      if (!conv) return json({ data: { conversation: null, messages: [] } });
+      if (!conv || conv.status === 'closed') return json({ data: { conversation: null, messages: [] } });
       const after = typeof body.after === 'string' && !isNaN(Date.parse(body.after))
         ? `&created_at=gt.${new Date(body.after).toISOString()}` : '';
       const messages = await select(
@@ -476,3 +488,4 @@ async function handle(req: Request): Promise<Response> {
     return json({ error: 'support_failed' }, 500);
   }
 }
+

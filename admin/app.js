@@ -604,6 +604,7 @@ const VIEWS = {
     render();
   },
 
+
   async reports() {
     const list = await rows("content_reports", "select=*&order=created_at.desc").catch(() => []);
     // Resolve the actual reported content so the admin can judge it, in 3 batched reads.

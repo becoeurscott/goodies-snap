@@ -570,34 +570,13 @@ private struct UnderlineField: View {
     }
 }
 
-/// Google's "G", approximated with arcs.
-///
-/// NOTE: Google's brand guidelines require their **official** asset, unmodified. Replace
-/// this with the supplied artwork from the Google Identity brand pages before shipping.
+/// Google's official "G" (vector asset `GoogleG`), unmodified as their brand guidelines require.
 struct GoogleGlyph: View {
     var body: some View {
-        GeometryReader { geo in
-            let s = min(geo.size.width, geo.size.height)
-            let lw = s * 0.22
-            ZStack {
-                arc(from: -30, to: 60, color: Color(hex: 0x4285F4), size: s, lw: lw)   // blue
-                arc(from: 60, to: 150, color: Color(hex: 0x34A853), size: s, lw: lw)   // green
-                arc(from: 150, to: 220, color: Color(hex: 0xFBBC05), size: s, lw: lw)  // yellow
-                arc(from: 220, to: 330, color: Color(hex: 0xEA4335), size: s, lw: lw)  // red
-                Rectangle()
-                    .fill(Color(hex: 0x4285F4))
-                    .frame(width: s * 0.30, height: lw)
-                    .offset(x: s * 0.16, y: 0)
-            }
-            .frame(width: s, height: s)
-        }
-    }
-
-    private func arc(from: Double, to: Double, color: Color, size: CGFloat, lw: CGFloat) -> some View {
-        Circle()
-            .trim(from: from / 360, to: to / 360)
-            .stroke(color, style: StrokeStyle(lineWidth: lw, lineCap: .butt))
-            .frame(width: size - lw, height: size - lw)
+        Image("GoogleG")
+            .resizable()
+            .scaledToFit()
+            .accessibilityHidden(true)
     }
 }
 

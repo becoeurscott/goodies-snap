@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SupportView: View {
     @EnvironmentObject var store: AppStore
+    @EnvironmentObject var social: SocialStore
     @State private var showChat = false
     @State private var expandedFAQ: String?
 
@@ -82,7 +83,7 @@ struct SupportView: View {
                 .padding(.top, 14)
 
                 Button {
-                    openChat()
+                    withAnimation(AppStore.navAnimation) { showChat = true }
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: "bubble.left.fill")
@@ -96,8 +97,8 @@ struct SupportView: View {
                 .buttonStyle(DarkButtonStyle())
                 .padding(.top, 24)
 
-                Link(destination: Legal.support) {
-                    Text("Or email us at support@goodiessnap.com")
+                Button { emailSupport() } label: {
+                    Text(verbatim: "Or email us at contact@goodiessnap.com")
                         .font(nunito(12, .semibold))
                         .foregroundStyle(Color.fg(0.45))
                         .frame(maxWidth: .infinity)
@@ -112,7 +113,6 @@ struct SupportView: View {
 
     private func topicCard(_ topic: Topic) -> some View {
         Button {
-            // A topic opens its most relevant answer; "Contact support" is for everything else.
             let faqID = ["recipes": "save", "subscription": "cancel", "account": "delete", "importing": "actions"][topic.id]
             withAnimation(AppStore.stepAnimation) { expandedFAQ = faqID }
         } label: {
@@ -183,32 +183,48 @@ struct SupportView: View {
 
     // MARK: - Chat
 
-    @State private var chatText = ""
-    @State private var thread: [SupportAPI.Message] = []
-    @State private var status = "ai"
-    @State private var loading = false
-    @State private var waitingForReply = false
-    @State private var sendFailed = false
-
-    private func openChat() {
-        guard store.isAuthenticated else {
-            store.showAuth(.support)
-            return
-        }
-        withAnimation(AppStore.navAnimation) { showChat = true }
+    private struct ChatMessage: Identifiable, Equatable {
+        var id = UUID().uuidString
+        let text: String
+        let isBot: Bool
+        let time: String
+        var author: String? = nil
     }
 
-    private var statusLine: (text: String, color: Color) {
+    private static let greeting = ChatMessage(
+        id: "greeting",
+        text: "Hey! 👋 I'm the goodiesSnap assistant. Ask me anything about recipes, your plan or how things work. If I can't help, I'll pass you to the team.",
+        isBot: true, time: "now")
+
+    @State private var chatText = ""
+    @State private var sending = false
+    @State private var messages: [ChatMessage] = [SupportView.greeting]
+    /// "ai", "needs_human" or "human" — shown in the header so people know who's answering.
+    @State private var status = "ai"
+    @State private var loadedHistory = false
+
+    private var statusLine: String {
         switch status {
-        case "needs_human": return ("Waiting for our team", .orange)
-        case "human": return ("Chatting with our team", .green)
-        default: return ("AI assistant · our team can step in", .green)
+        case "needs_human": return "Passed to the team · we'll reply here"
+        case "human": return "Chatting with the team"
+        default: return "Assistant · replies can take up to a minute"
         }
     }
 
     private var chatView: some View {
+        chatBody
+            .task { await loadHistory() }
+            .task {
+                // Team replies arrive from the admin console; check for them while the chat is open.
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(15))
+                    if !sending { await loadHistory() }
+                }
+            }
+    }
+
+    private var chatBody: some View {
         VStack(spacing: 0) {
-            // Chat header
             HStack(spacing: 12) {
                 Button {
                     withAnimation(AppStore.navAnimation) { showChat = false }
@@ -226,8 +242,8 @@ struct SupportView: View {
                     Text("Chat support")
                         .font(nunito(16, .extrabold))
                     HStack(spacing: 5) {
-                        Circle().fill(statusLine.color).frame(width: 7, height: 7)
-                        Text(statusLine.text)
+                        Circle().fill(Color.green).frame(width: 7, height: 7)
+                        Text(statusLine)
                             .font(nunito(11, .semibold))
                             .foregroundStyle(Color.fg(0.5))
                     }
@@ -240,42 +256,27 @@ struct SupportView: View {
                 Rectangle().fill(Color.fg(0.08)).frame(height: 1)
             }
 
-            // Messages
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 12) {
-                        welcomeBubble
-                        ForEach(thread) { msg in
+                        ForEach(messages) { msg in
                             chatBubble(msg)
                                 .id(msg.id)
                         }
-                        if waitingForReply {
-                            typingBubble.id("typing")
-                        }
-                        if loading && thread.isEmpty {
-                            ProgressView().padding(.top, 20)
-                        }
-                        if status == "needs_human" {
-                            banner("A person from our team will reply here. You can close the app — the answer will be waiting.")
-                        } else if status == "closed" {
-                            banner("This conversation is closed. Send a message to start a new one.")
+                        if sending {
+                            typingIndicator
                         }
                     }
                     .padding(.horizontal, 22)
                     .padding(.vertical, 16)
                 }
-                .onChange(of: thread.count) { _, _ in scrollToEnd(proxy) }
-                .onChange(of: waitingForReply) { _, _ in scrollToEnd(proxy) }
+                .onChange(of: messages.count) { _, _ in
+                    if let last = messages.last {
+                        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                    }
+                }
             }
 
-            if sendFailed {
-                Text("Couldn't send. Check your connection and try again.")
-                    .font(nunito(12, .semibold))
-                    .foregroundStyle(Color.red.opacity(0.85))
-                    .padding(.top, 8)
-            }
-
-            // Input bar
             HStack(spacing: 10) {
                 TextField("Your question", text: $chatText, axis: .vertical)
                     .font(nunito(14, .semibold))
@@ -294,10 +295,10 @@ struct SupportView: View {
                 } label: {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.system(size: 32, weight: .medium))
-                        .foregroundStyle(canSend ? Color.gsPeach : Color.fg(0.2))
+                        .foregroundStyle(chatText.trimmingCharacters(in: .whitespaces).isEmpty || sending ? Color.fg(0.2) : Color.gsPeach)
                 }
                 .buttonStyle(.plain)
-                .disabled(!canSend)
+                .disabled(chatText.trimmingCharacters(in: .whitespaces).isEmpty || sending)
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 12)
@@ -305,181 +306,144 @@ struct SupportView: View {
                 Rectangle().fill(Color.fg(0.08)).frame(height: 1)
             }
         }
-        .task { await loadThread() }
-        // While the team owns the conversation, look for their reply every few seconds.
-        // `.task(id:)` cancels the loop when the status changes or the chat closes.
-        .task(id: status) {
-            guard status == "needs_human" || status == "human" else { return }
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(6))
-                guard !Task.isCancelled else { return }
-                await pollNewMessages()
-            }
-        }
     }
 
-    private var canSend: Bool {
-        !waitingForReply && !chatText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private func scrollToEnd(_ proxy: ScrollViewProxy) {
-        withAnimation {
-            if waitingForReply {
-                proxy.scrollTo("typing", anchor: .bottom)
-            } else if let last = thread.last {
-                proxy.scrollTo(last.id, anchor: .bottom)
-            }
-        }
-    }
-
-    private var welcomeBubble: some View {
-        botRow(label: nil) {
-            Text("Hello! 👋 I'm the goodiesSnap assistant. Ask me anything about the app, your plan or your recipes — and if you'd rather talk to a person, just say so.")
-        }
-    }
-
-    private var typingBubble: some View {
-        botRow(label: nil) {
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text("Typing…").foregroundStyle(Color.fg(0.5))
-            }
-        }
-    }
-
-    private func banner(_ text: String) -> some View {
-        Text(text)
-            .font(nunito(12, .semibold))
-            .foregroundStyle(Color.fg(0.55))
-            .multilineTextAlignment(.center)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity)
-            .background(Color.fg(0.04))
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .padding(.top, 4)
-    }
-
-    private func botRow<Content: View>(label: String?, @ViewBuilder content: () -> Content) -> some View {
+    private var typingIndicator: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: label == nil ? "sparkles" : "person.fill")
+            Image(systemName: "bubble.left.fill")
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(.white)
                 .frame(width: 30, height: 30)
-                .background(label == nil ? Color.gsPeach : Color.gsDock)
+                .background(Color.gsPeach)
                 .clipShape(Circle())
-            VStack(alignment: .leading, spacing: 4) {
-                if let label {
-                    Text(label)
-                        .font(nunito(10.5, .extrabold))
-                        .foregroundStyle(Color.fg(0.5))
+
+            HStack(spacing: 4) {
+                ForEach(0..<3, id: \.self) { i in
+                    Circle()
+                        .fill(Color.fg(0.3))
+                        .frame(width: 6, height: 6)
+                        .opacity(0.4)
+                        .animation(
+                            .easeInOut(duration: 0.5)
+                                .repeatForever(autoreverses: true)
+                                .delay(Double(i) * 0.15),
+                            value: sending
+                        )
                 }
-                content()
-                    .font(nunito(13.5, .semibold))
-                    .foregroundStyle(Color.gsFg)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(Color.fg(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
-            .frame(maxWidth: 280, alignment: .leading)
-            Spacer(minLength: 0)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 14)
+            .background(Color.fg(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+            Spacer()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private static let timeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "h:mm a"
-        return f
-    }()
-
-    @ViewBuilder
-    private func chatBubble(_ msg: SupportAPI.Message) -> some View {
-        let time = msg.date.map { Self.timeFormatter.string(from: $0) } ?? ""
-        if msg.isMine {
-            VStack(alignment: .trailing, spacing: 4) {
-                Text(msg.body)
-                    .font(nunito(13.5, .semibold))
+    private func chatBubble(_ msg: ChatMessage) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            if msg.isBot {
+                Image(systemName: "bubble.left.fill")
+                    .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(.white)
+                    .frame(width: 30, height: 30)
+                    .background(Color.gsPeach)
+                    .clipShape(Circle())
+            }
+
+            VStack(alignment: msg.isBot ? .leading : .trailing, spacing: 4) {
+                if let author = msg.author {
+                    Text(author)
+                        .font(nunito(10.5, .extrabold))
+                        .foregroundStyle(Color.gsAccentInk)
+                }
+                Text(msg.text)
+                    .font(nunito(13.5, .semibold))
+                    .foregroundStyle(msg.isBot ? Color.gsFg : .white)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(Color.gsDock)
+                    .background(msg.isBot ? Color.fg(0.06) : Color.gsDock)
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                Text(time)
+
+                Text(msg.time)
                     .font(nunito(10, .semibold))
                     .foregroundStyle(Color.fg(0.35))
             }
-            .frame(maxWidth: 280, alignment: .trailing)
-            .frame(maxWidth: .infinity, alignment: .trailing)
-        } else {
-            VStack(alignment: .leading, spacing: 4) {
-                botRow(label: msg.sender == "agent" ? "\(msg.authorName ?? "goodiesSnap team") · goodiesSnap team" : nil) {
-                    Text(msg.body)
-                }
-                Text(time)
-                    .font(nunito(10, .semibold))
-                    .foregroundStyle(Color.fg(0.35))
-                    .padding(.leading, 40)
+            .frame(maxWidth: 280, alignment: msg.isBot ? .leading : .trailing)
+
+            if !msg.isBot {
+                Spacer(minLength: 0)
             }
         }
+        .frame(maxWidth: .infinity, alignment: msg.isBot ? .leading : .trailing)
     }
 
-    /// Runs a support call with the current token, renewing it once if it has expired.
-    private func withToken(_ op: (String) async throws -> SupportAPI.Thread) async throws -> SupportAPI.Thread {
-        guard let token = store.aiToken else { throw SupportAPI.SupportError.notSignedIn }
-        do {
-            return try await op(token)
-        } catch SupportAPI.SupportError.notSignedIn {
-            guard let fresh = await store.refreshAIToken?() else { throw SupportAPI.SupportError.notSignedIn }
-            store.aiToken = fresh
-            return try await op(fresh)
-        }
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "h:mm a"; return f
+    }()
+
+    private static func chatMessage(_ m: SupportAPI.Message) -> ChatMessage {
+        let date = ISO8601DateFormatter.withFractional.date(from: m.created_at)
+            ?? ISO8601DateFormatter().date(from: m.created_at)
+        return ChatMessage(id: m.id, text: m.body, isBot: m.sender != "user",
+                           time: date.map { timeFormatter.string(from: $0) } ?? "",
+                           author: m.sender == "agent" ? (m.author_name ?? "goodiesSnap team") : nil)
     }
 
-    private func loadThread() async {
-        loading = true
-        defer { loading = false }
-        guard let result = try? await withToken({ try await SupportAPI.history(token: $0) }) else { return }
-        thread = result.messages
-        status = result.conversation?.status ?? "ai"
+    /// A token for the support function: the signed-in session, or a guest session so
+    /// people can get help before they have an account.
+    private func supportToken() async -> String? {
+        if social.session == nil { _ = await social.startGuestSessionIfNeeded() }
+        return social.session?.accessToken
     }
 
-    private func pollNewMessages() async {
-        guard let result = try? await withToken({ try await SupportAPI.history(after: thread.last?.createdAt, token: $0) }) else { return }
-        merge(result.messages)
-        if let s = result.conversation?.status { status = s }
-    }
-
-    /// Adds messages not already shown; the server can resend the newest one.
-    private func merge(_ incoming: [SupportAPI.Message]) {
-        let known = Set(thread.map(\.id))
-        let fresh = incoming.filter { !known.contains($0.id) }
-        if !fresh.isEmpty { thread.append(contentsOf: fresh) }
+    private func loadHistory() async {
+        guard let token = await supportToken(),
+              let payload = try? await SupportAPI.history(token: token) else { return }
+        if let conv = payload.conversation { status = conv.status }
+        let server = payload.messages.map(Self.chatMessage)
+        if !server.isEmpty { messages = [Self.greeting] + server }
+        loadedHistory = true
     }
 
     private func sendMessage() {
         let text = chatText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !waitingForReply else { return }
+        guard !text.isEmpty, !sending else { return }
+
+        let pending = ChatMessage(text: text, isBot: false, time: Self.timeFormatter.string(from: Date()))
+        messages.append(pending)
         chatText = ""
-        sendFailed = false
+        sending = true
         Haptics.tap(.light)
-        // Only show "typing" when the assistant is the one who'll answer.
-        waitingForReply = true
 
         Task {
-            defer { waitingForReply = false }
+            defer { sending = false }
+            guard let token = await supportToken() else {
+                messages.append(ChatMessage(text: "We couldn't connect you just now. Check your internet and try again, or email contact@goodiessnap.com.", isBot: true, time: Self.timeFormatter.string(from: Date())))
+                return
+            }
             do {
-                let result = try await withToken { try await SupportAPI.send(text, token: $0) }
-                if status == "closed" { thread = [] }
-                merge(result.messages)
-                if let s = result.conversation?.status { status = s }
-            } catch SupportAPI.SupportError.notSignedIn {
-                chatText = text
-                store.showAuth(.support)
+                let payload = try await SupportAPI.send(text, token: token)
+                if let conv = payload.conversation { status = conv.status }
+                // Swap the optimistic bubble for the stored copy, then add the reply.
+                messages.removeAll { $0.id == pending.id }
+                for m in payload.messages.map(Self.chatMessage) where !messages.contains(where: { $0.id == m.id }) {
+                    messages.append(m)
+                }
             } catch {
-                chatText = text
-                sendFailed = true
+                messages.append(ChatMessage(text: "That didn't go through. Try again in a moment, or email contact@goodiessnap.com.", isBot: true, time: Self.timeFormatter.string(from: Date())))
+            }
+        }
+    }
+
+    /// Opens the mail app. Many people have no Mail account set up (Gmail users especially),
+    /// in which case `mailto:` silently does nothing — so copy the address and say so.
+    private func emailSupport() {
+        UIApplication.shared.open(Legal.support) { opened in
+            if !opened {
+                UIPasteboard.general.string = "contact@goodiessnap.com"
+                store.showToast("Email address copied")
             }
         }
     }
@@ -509,4 +473,14 @@ struct SupportView: View {
             Color.clear.frame(width: 42, height: 42)
         }
     }
+}
+
+
+extension ISO8601DateFormatter {
+    /// Server timestamps carry milliseconds ("2026-09-25T13:40:25.243Z").
+    static let withFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
 }

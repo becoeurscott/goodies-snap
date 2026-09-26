@@ -41,17 +41,6 @@ enum Promo {
     /// Headline for the ribbon. "Up to" because the depth differs by plan —
     /// Plus is 50% off, Pro is 23% — so a flat "half price" claim would be wrong for Pro.
     static let introDiscountLabel = "Up to 50% off"
-
-    /// Redeemable codes → extra one-off actions.
-    static let codes: [String: Int] = [
-        "WELCOME10": 10,
-        "COOK25": 25,
-        "GOODIES50": 50,
-    ]
-
-    static func bonus(forCode raw: String) -> Int? {
-        codes[raw.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()]
-    }
 }
 
 extension Entitlement {

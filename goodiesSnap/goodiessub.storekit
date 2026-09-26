@@ -66,8 +66,8 @@
           ],
           "localizations" : [
             {
-              "description" : "this is where the app was created",
-              "displayName" : "goodies location",
+              "description" : "100 AI actions each month for recipe imports.",
+              "displayName" : "Plus Monthly",
               "locale" : "en_US"
             }
           ],
@@ -105,8 +105,8 @@
           ],
           "localizations" : [
             {
-              "description" : "this is where the app was the app",
-              "displayName" : "goodies snap location",
+              "description" : "100 AI actions each month for recipe imports.",
+              "displayName" : "Plus Yearly",
               "locale" : "en_US"
             }
           ],
@@ -144,8 +144,8 @@
           ],
           "localizations" : [
             {
-              "description" : "this is where the app was made",
-              "displayName" : "goodies snap location",
+              "description" : "400 AI actions each month, including dish scanning.",
+              "displayName" : "Pro Monthly",
               "locale" : "en_US"
             }
           ],
@@ -183,8 +183,8 @@
           ],
           "localizations" : [
             {
-              "description" : "this is where the app was made",
-              "displayName" : "goodies snap location",
+              "description" : "400 AI actions each month, including dish scanning.",
+              "displayName" : "Pro Yearly",
               "locale" : "en_US"
             }
           ],

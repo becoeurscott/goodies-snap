@@ -15,18 +15,31 @@ import { createClient } from 'npm:@insforge/sdk';
  *   Moderation: hide_content {post|comment|review}, delete_content, delete_post, delete_report
  *   Catalog:    catalog_upsert, catalog_delete, catalog_set_flags
  *   Groups:     group_upsert, group_delete
- *   Support:    support_reply, support_set_status, support_article_upsert, support_article_delete,
+ *   Support:    support_reply, support_close, support_set_status, support_article_upsert, support_article_delete,
  *               support_app_update
  */
 
 // Defence in depth: this function is already bearer-authed and admin-gated, but there's no
 // reason for any origin other than the control room to call it from a browser.
+// The control room is served from InsForge hosting; goodiessnap.com is kept for when it moves.
+const ALLOWED_ORIGINS = new Set([
+  'https://j7pth4qn.insforge.site',
+  'https://admin.goodiessnap.com',
+  'https://goodiessnap.com',
+  'https://www.goodiessnap.com',
+]);
 const CORS = {
-  'Access-Control-Allow-Origin': 'https://goodiessnap.com',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   'Vary': 'Origin',
 };
+
+/** Echoes the caller's origin back only when it is one of ours; anything else gets no CORS grant. */
+function withCors(res: Response, origin: string | null): Response {
+  const headers = new Headers(res.headers);
+  if (origin && ALLOWED_ORIGINS.has(origin)) headers.set('Access-Control-Allow-Origin', origin);
+  return new Response(res.body, { status: res.status, headers });
+}
 
 const BUCKET = 'post-images';
 const PLANS = new Set(['free', 'plus', 'pro']);
@@ -45,7 +58,7 @@ const PERMISSIONS: Record<string, string> = {
   group_upsert: 'ADMIN', group_delete: 'ADMIN', delete_user: 'ADMIN',
   set_admin: 'ADMIN', set_role: 'SUPER_ADMIN',
   config_upsert: 'ADMIN', config_rollback: 'ADMIN', maintenance_set: 'ADMIN', broadcast_create: 'ADMIN',
-  support_reply: 'SUPPORT', support_set_status: 'SUPPORT', support_article_upsert: 'SUPPORT',
+  support_reply: 'SUPPORT', support_close: 'SUPPORT', support_set_status: 'SUPPORT', support_article_upsert: 'SUPPORT',
   support_article_delete: 'ADMIN', support_app_update: 'ADMIN',
 };
 // Every id is interpolated into a PostgREST URL; reject anything that isn't a plain UUID so a
@@ -65,6 +78,10 @@ function json(body: unknown, status = 200) {
 }
 
 export default async function (req: Request) {
+  return withCors(await handle(req), req.headers.get('Origin'));
+}
+
+async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
 
@@ -516,6 +533,17 @@ export default async function (req: Request) {
     const res = await rest(`support_apps?id=eq.${appId}`, { method: 'PATCH', body: JSON.stringify(patch) });
     if (!res.ok) { console.error('support_app_update', res.status, await res.text()); return json({ error: 'update_failed' }, 502); }
     await audit('support_app_update', 'support_app', appId, { fields: Object.keys(patch).filter((k) => k !== 'updated_at') });
+    return json({ ok: true });
+  }
+
+  if (action === 'support_close') {
+    const convId = body.conversationId;
+    if (!isUUID(convId)) return json({ error: 'missing_conversation' }, 400);
+    const res = await rest(`support_conversations?id=eq.${convId}`, {
+      method: 'PATCH', body: JSON.stringify({ status: 'closed' }),
+    });
+    if (!res.ok) return json({ error: 'save_failed' }, 502);
+    await audit('support_close', 'support_conversation', convId);
     return json({ ok: true });
   }
 

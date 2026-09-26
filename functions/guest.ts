@@ -206,10 +206,16 @@ export default async function (req: Request) {
   }
 
   // Mark the profile. Done with the service key because is_guest is guarded against
-  // end-user writes. Best-effort: a failed mark must not block onboarding.
+  // end-user writes. An upsert, not a PATCH: a brand-new guest has no profile row yet, and a
+  // PATCH on a missing row silently changes nothing — guests then looked like real accounts.
+  // Best-effort: a failed mark must not block onboarding.
   const mark = await fetch(
-    `${baseURL}/api/database/records/profiles?id=eq.${encodeURIComponent(userId)}`,
-    { method: 'PATCH', headers: admin, body: JSON.stringify({ is_guest: true, display_name: name }) },
+    `${baseURL}/api/database/records/profiles?on_conflict=id`,
+    {
+      method: 'POST',
+      headers: { ...admin, Prefer: 'resolution=merge-duplicates' },
+      body: JSON.stringify([{ id: userId, is_guest: true, display_name: name }]),
+    },
   );
   if (!mark.ok) console.error('guest: profile mark failed', mark.status, await mark.text());
 
