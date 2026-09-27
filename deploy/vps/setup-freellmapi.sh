@@ -93,14 +93,15 @@ EOF
 
 echo "==> Starting FreeLLMAPI"
 docker compose pull -q
-docker compose up -d
+# Recreate so a fixed config or env is always picked up, even from a crash-looping container.
+docker compose up -d --force-recreate
 
 ok=""
 for _ in $(seq 1 30); do
   curl -sf "http://127.0.0.1:$PORT/api/ping" >/dev/null && { ok=1; break; }
   sleep 2
 done
-[ -n "$ok" ] || { echo "FreeLLMAPI did not start. Logs:"; docker compose logs --tail 40; exit 1; }
+[ -n "$ok" ] || { echo "FreeLLMAPI did not start. Latest logs:"; docker compose logs --tail 15; exit 1; }
 
 # Make sure the listener really is private before publishing anything.
 if ss -tlnH "sport = :$PORT" | awk '{print $4}' | grep -qv '^127\.0\.0\.1:'; then
