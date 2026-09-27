@@ -124,7 +124,11 @@ $KEY_LINES		}
 		}
 	}
 }
+
+# Other sites on this server (one file each, e.g. setup-freellmapi.sh)
+import /etc/caddy/sites/*.caddy
 EOF
+mkdir -p /etc/caddy/sites
 chown root:caddy /etc/caddy/Caddyfile
 chmod 640 /etc/caddy/Caddyfile
 mkdir -p /var/log/caddy && chown caddy:caddy /var/log/caddy
