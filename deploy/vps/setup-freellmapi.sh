@@ -58,6 +58,7 @@ if [ ! -f freellmapi.config.json ]; then
   "customProviders": [
     {
       "baseUrl": "http://127.0.0.1:11434/v1",
+      "apiKey": "ollama",
       "label": "VPS Ollama",
       "models": [
         { "model": "qwen2.5:3b", "displayName": "Qwen 2.5 3B (this VPS)" }
@@ -68,6 +69,22 @@ if [ ! -f freellmapi.config.json ]; then
 }
 EOF
 fi
+
+# FreeLLMAPI refuses a custom provider without an apiKey, even one that needs none. Ollama
+# ignores it, so a placeholder is fine. Repairs configs written by earlier runs of this script.
+python3 - <<'EOF'
+import json
+p = "freellmapi.config.json"
+c = json.load(open(p))
+changed = False
+for prov in c.get("customProviders", []):
+    if not prov.get("apiKey"):
+        prov["apiKey"] = "ollama"
+        changed = True
+if changed:
+    json.dump(c, open(p, "w"), indent=2)
+    print("==> Added placeholder apiKey to the Ollama provider")
+EOF
 
 # The image drops to its `node` user (uid 1000) before reading the config, so that user
 # must own it; mode 600 keeps it private from everyone else on the host.
