@@ -9,38 +9,86 @@ struct ProfileView: View {
     @State private var confirmDelete = false
     @State private var deleteConfirmation = ""
     @State private var deleteFailed = ""
-    @State private var manageTab = 0
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 header
-                identityCard
+                identity
+                    .padding(.top, 18)
+                statsCard
                     .padding(.top, 22)
-                statsGrid
-                    .padding(.top, 16)
-                subscriptionCard
-                    .padding(.top, 16)
-                manageSection
-                    .padding(.top, 28)
-                legalSection
-                    .padding(.top, 28)
+                planBanner
+                    .padding(.top, 14)
+
+                section("Kitchen") {
+                    navRow(icon: "book.closed.fill", title: "My recipes",
+                           badge: "\(store.recipes.count)") { store.go(to: .library) }
+                    navRow(icon: "cart.fill", title: "Shopping list",
+                           badge: store.undoneCount > 0 ? "\(store.undoneCount)" : nil) { store.go(to: .shopping) }
+                    navRow(icon: "calendar", title: "Meal plan",
+                           badge: store.plannedCount > 0 ? "\(store.plannedCount)" : nil) { store.go(to: .plan) }
+                    navRow(icon: "plus", title: "Save a new recipe", isLast: true) { store.go(to: .importer) }
+                }
+                .padding(.top, 22)
+
+                section("Account") {
+                    toggleRow(icon: "sparkles", title: "Allow AI recipe processing", isOn: Binding(
+                        get: { store.aiSharingAllowed },
+                        set: { value in
+                            if value { store.showAIConsent = true }
+                            else { store.finishAIConsent(allow: false) }
+                        }
+                    ))
+                    if social.signedIn && !social.blockedIDs.isEmpty {
+                        actionRow(icon: "hand.raised.fill", title: "\(social.blockedIDs.count) blocked",
+                                  trailing: "Unblock all") {
+                            for id in social.blockedIDs { social.unblock(userID: id) }
+                        }
+                    }
+                    navRow(icon: "bubble.left.and.text.bubble.right.fill", title: "Help & support",
+                           isLast: true) { store.go(to: .support) }
+                }
+                .padding(.top, 16)
+
+                section("Privacy & legal") {
+                    linkRow(icon: "doc.text.fill", title: "Terms of Use", url: Legal.terms)
+                    linkRow(icon: "lock.fill", title: "Privacy Policy", url: Legal.privacy,
+                            isLast: !social.signedIn)
+                    if social.signedIn {
+                        navRow(icon: "trash.fill", title: "Delete my account", destructive: true, isLast: true) {
+                            deleteConfirmation = ""
+                            deleteFailed = ""
+                            confirmDelete = true
+                        }
+                    }
+                }
+                .padding(.top, 16)
+
+                section("Data") {
+                    actionRow(icon: "cart.badge.minus", title: "Clear shopping list",
+                              disabled: store.shopping.isEmpty) { store.clearShoppingAll() }
+                    actionRow(icon: "arrow.counterclockwise", title: "Clear saved library",
+                              destructive: true, isLast: true) { confirmReset = true }
+                }
+                .padding(.top, 16)
 
                 if social.signedIn {
                     disconnectButton
-                        .padding(.top, 28)
+                        .padding(.top, 24)
                 }
 
                 Text("goodiesSnap 1.0 — every recipe, beautifully kept.")
                     .font(nunito(11.5, .semibold))
                     .foregroundStyle(Color.fg(0.3))
                     .frame(maxWidth: .infinity)
-                    .padding(.top, 30)
+                    .padding(.top, 26)
             }
-            .padding(.horizontal, 22)
-            .padding(.top, 16)
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
             .padding(.bottom, 44)
         }
+        .background(Color.gsBg.ignoresSafeArea())
         .scrollDismissesKeyboard(.interactively)
         .task { await social.loadBlocked() }
         .onAppear {
@@ -64,408 +112,239 @@ struct ProfileView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack {
-            Button { store.goBack() } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(Color.gsFg)
-                    .frame(width: 44, height: 44)
-                    .background(Color.fg(0.06))
-                    .clipShape(Circle())
-                    .overlay(Circle().strokeBorder(Color.fg(0.14), lineWidth: 1))
+        ZStack {
+            Text("Profile")
+                .font(nunito(17, .extrabold))
+            HStack {
+                Button { store.goBack() } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color.gsFg)
+                        .frame(width: 42, height: 42)
+                        .background(Color.gsCard, in: Circle())
+                        .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Back")
+                Spacer()
             }
-            .buttonStyle(.plain)
-            Spacer()
         }
-        .padding(.leading, -4)
     }
 
-    // MARK: - Identity card
+    // MARK: - Identity
 
-    private var identityCard: some View {
+    private var identity: some View {
         VStack(spacing: 0) {
-            Text(store.initial)
-                .font(nunito(30, .black))
-                .frame(width: 84, height: 84)
-                .background(Color.fg(0.1))
-                .clipShape(Circle())
-                .overlay(Circle().strokeBorder(Color.fg(0.18), lineWidth: 1))
-
-            TextField(
-                "", text: $store.userName,
-                prompt: Text("Your name").foregroundStyle(Color.fg(0.35))
-            )
-            .font(nunito(26, .black))
-            .multilineTextAlignment(.center)
-            .focused($nameFocused)
-            .submitLabel(.done)
-            .autocorrectionDisabled()
-            .textInputAutocapitalization(.words)
-            .onSubmit { store.persist() }
-            .padding(.top, 14)
-
-            HStack(spacing: 6) {
-                Image(systemName: "pencil")
-                    .font(.system(size: 10, weight: .bold))
-                Text("Tap your name to change it")
-                    .font(nunito(11.5, .semibold))
+            Button { nameFocused = true } label: {
+                Text(store.initial)
+                    .font(nunito(34, .black))
+                    .foregroundStyle(Color.gsFg)
+                    .frame(width: 96, height: 96)
+                    .background(Color.gsPeach, in: Circle())
+                    .overlay(alignment: .bottomTrailing) {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 30, height: 30)
+                            .background(Color.gsDock, in: Circle())
+                            .overlay(Circle().strokeBorder(Color.gsBg, lineWidth: 3))
+                            .offset(x: 2, y: 2)
+                    }
             }
-            .foregroundStyle(Color.fg(0.4))
-            .padding(.top, 2)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Edit your name")
+
+            TextField("", text: $store.userName,
+                      prompt: Text("Your name").foregroundStyle(Color.fg(0.35)))
+                .font(nunito(26, .black))
+                .multilineTextAlignment(.center)
+                .focused($nameFocused)
+                .submitLabel(.done)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.words)
+                .onSubmit { store.persist() }
+                .padding(.top, 14)
+
+            Text(subtitle)
+                .font(nunito(13, .semibold))
+                .foregroundStyle(Color.gsMuted)
+                .padding(.top, 2)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 26)
-        .glassCard(radius: 26)
         .onChange(of: nameFocused) { _, focused in
             if !focused { store.persist() }
         }
     }
 
-    // MARK: - Subscription
-
-    @ViewBuilder
-    private var subscriptionCard: some View {
-        let plan = store.entitlement.plan
-        if plan.isPaid {
-            HStack(spacing: 12) {
-                Image(systemName: "crown.fill")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(Color.gsAccentInk)
-                    .frame(width: 42, height: 42)
-                    .background(Color.gsPeachSoft)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("\(plan.title) active")
-                        .font(nunito(15, .extrabold))
-                    Text("\(store.entitlement.remaining) AI actions left this month")
-                        .font(nunito(11.5, .semibold))
-                        .foregroundStyle(Color.gsMuted)
-                }
-                Spacer()
-                Button("Manage") { store.showPaywall(.upgrade) }
-                    .font(nunito(12.5, .extrabold))
-                    .foregroundStyle(Color.gsAccentInk)
-                    .buttonStyle(.plain)
-            }
-            .padding(14)
-            .glassCard(radius: 20, fill: 0.05, stroke: 0.1)
-        } else {
-            Button { store.showPaywall(.upgrade) } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 17, weight: .bold))
-                        .foregroundStyle(Color.gsPeach)
-                        .frame(width: 42, height: 42)
-                        .background(Color.gsDock)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Upgrade to Pro")
-                            .font(nunito(15, .extrabold))
-                        Text("\(store.entitlement.remaining) free AI actions left this month")
-                            .font(nunito(11.5, .semibold))
-                            .foregroundStyle(Color.fg(0.5))
-                    }
-                    Spacer(minLength: 8)
-                    Text("Upgrade")
-                        .font(nunito(12.5, .extrabold))
-                        .foregroundStyle(Color.white)
-                        .padding(.horizontal, 14)
-                        .frame(height: 34)
-                        .background(Color.gsDock)
-                        .clipShape(Capsule())
-                }
-                .padding(14)
-                .background(Color.gsPeachSoft)
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .strokeBorder(Color.gsPeach.opacity(0.5), lineWidth: 1.5))
-            }
-            .buttonStyle(PressableStyle(scale: 0.98))
-        }
+    private var subtitle: String {
+        let who = social.signedIn ? "Home cook" : "Guest"
+        return "\(who) · \(store.entitlement.plan.title) plan"
     }
 
-    private var statsGrid: some View {
-        HStack(spacing: 12) {
-            statTile(value: "\(store.recipes.count)", label: "Recipes")
-            statTile(value: "\(store.favorites.count)", label: "Favorites")
-            statTile(value: "\(store.plannedCount)", label: "Planned")
+    // MARK: - Stats
+
+    private var statsCard: some View {
+        HStack(spacing: 0) {
+            stat("\(store.recipes.count)", "Recipes")
+            divider
+            stat("\(store.favorites.count)", "Favorites")
+            divider
+            stat("\(store.plannedCount)", "Planned")
         }
+        .padding(.vertical, 16)
+        .background(Color.gsCard, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .shadow(color: .black.opacity(0.04), radius: 12, y: 3)
     }
 
-    private func statTile(value: String, label: String) -> some View {
-        VStack(spacing: 2) {
-            Text(value)
-                .font(nunito(26, .black))
-            Kicker(text: label, size: 10, tracking: 1.4, opacity: 0.5)
+    private var divider: some View {
+        Rectangle().fill(Color.fg(0.08)).frame(width: 1, height: 34)
+    }
+
+    private func stat(_ value: String, _ label: String) -> some View {
+        VStack(spacing: 3) {
+            Text(value).font(nunito(24, .black))
+            Text(label).font(nunito(12.5, .semibold)).foregroundStyle(Color.gsMuted)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 18)
-        .glassCard(radius: 20, fill: 0.05, stroke: 0.1)
+        .accessibilityElement(children: .combine)
     }
 
-    // MARK: - Manage (tabbed: Profile / Kitchen / Actions)
+    // MARK: - Plan banner
 
-    private var manageSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Manage")
-                .font(nunito(19, .extrabold))
-
-            HStack(spacing: 0) {
-                manageTabButton("Profile", index: 0)
-                manageTabButton("Kitchen", index: 1)
-                manageTabButton("Actions", index: 2)
+    private var planBanner: some View {
+        let plan = store.entitlement.plan
+        return Button { store.showPaywall(.upgrade) } label: {
+            HStack(spacing: 14) {
+                Image(systemName: plan.isPaid ? "crown.fill" : "sparkles")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(Color.gsPeach)
+                    .frame(width: 44, height: 44)
+                    .background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(plan.isPaid ? "\(plan.title) active" : "Upgrade to Pro")
+                        .font(nunito(15.5, .extrabold))
+                        .foregroundStyle(.white)
+                    Text(plan.isPaid
+                         ? "\(store.entitlement.remaining) AI actions left this month"
+                         : "\(store.entitlement.remaining) free AI actions left this month")
+                        .font(nunito(12, .semibold))
+                        .foregroundStyle(Color.white.opacity(0.62))
+                }
+                Spacer(minLength: 6)
+                Text(plan.isPaid ? "Manage" : "Upgrade")
+                    .font(nunito(12.5, .extrabold))
+                    .foregroundStyle(Color.gsFg)
+                    .padding(.horizontal, 13)
+                    .frame(height: 32)
+                    .background(Color.gsPeach, in: Capsule())
             }
-            .padding(4)
-            .background(Color.fg(0.06))
-            .clipShape(Capsule())
+            .padding(16)
+            .background(Color.gsDock, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        }
+        .buttonStyle(PressableStyle(scale: 0.98))
+    }
 
-            switch manageTab {
-            case 0: profileTab
-            case 1: kitchenTab
-            default: actionsTab
-            }
+    // MARK: - Grouped rows
+
+    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title.uppercased())
+                .font(nunito(11.5, .extrabold))
+                .tracking(1.2)
+                .foregroundStyle(Color.gsMuted)
+                .padding(.horizontal, 4)
+                .padding(.bottom, 4)
+            VStack(spacing: 0) { content() }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 4)
+                .background(Color.gsCard, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .shadow(color: .black.opacity(0.04), radius: 12, y: 3)
         }
     }
 
-    private func manageTabButton(_ title: String, index: Int) -> some View {
-        Button {
-            withAnimation(.easeOut(duration: 0.2)) { manageTab = index }
-        } label: {
-            Text(title)
-                .font(nunito(13, .extrabold))
-                .foregroundStyle(manageTab == index ? Color.gsFg : Color.fg(0.45))
-                .frame(maxWidth: .infinity, minHeight: 36)
-                .background(manageTab == index ? Color.gsBg : Color.clear)
-                .clipShape(Capsule())
+    private func iconTile(_ icon: String, destructive: Bool = false) -> some View {
+        Image(systemName: icon)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(destructive ? Color.red : Color.gsAccentInk)
+            .frame(width: 36, height: 36)
+            .background(destructive ? Color.red.opacity(0.08) : Color.gsPeachSoft,
+                        in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+    }
+
+    private func rowChrome<Content: View>(isLast: Bool, @ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 12) { content() }
+            .frame(minHeight: 58)
+            .contentShape(Rectangle())
+            .overlay(alignment: .bottom) {
+                if !isLast { Rectangle().fill(Color.fg(0.06)).frame(height: 1).padding(.leading, 48) }
+            }
+    }
+
+    private func navRow(icon: String, title: String, badge: String? = nil, destructive: Bool = false,
+                        isLast: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            rowChrome(isLast: isLast) {
+                iconTile(icon, destructive: destructive)
+                Text(title)
+                    .font(nunito(15, .bold))
+                    .foregroundStyle(destructive ? Color.red : Color.gsFg)
+                Spacer(minLength: 8)
+                if let badge {
+                    Text(badge)
+                        .font(nunito(12.5, .extrabold))
+                        .foregroundStyle(Color.gsMuted)
+                        .padding(.horizontal, 10)
+                        .frame(height: 26)
+                        .background(Color.gsFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.fg(0.35))
+            }
         }
         .buttonStyle(.plain)
     }
 
-    private var profileTab: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 14) {
-                Image(systemName: "person.fill")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Color.fg(0.55))
-                    .frame(width: 20)
-                Text("Name")
-                    .font(nunito(13.5, .bold))
-                Spacer()
-                Text(store.userName.isEmpty ? "Not set" : store.userName)
-                    .font(nunito(13.5, .bold))
-                    .foregroundStyle(Color.fg(0.5))
-            }
-            .frame(minHeight: 48)
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(Color.fg(0.07)).frame(height: 1)
-            }
-
-            if social.signedIn && !social.blockedIDs.isEmpty {
-                HStack(spacing: 14) {
-                    Image(systemName: "hand.raised.fill")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Color.fg(0.55))
-                        .frame(width: 20)
-                    Text("\(social.blockedIDs.count) blocked")
-                        .font(nunito(13.5, .bold))
-                    Spacer()
-                    Button("Unblock all") {
-                        for id in social.blockedIDs { social.unblock(userID: id) }
-                    }
-                    .font(nunito(12, .extrabold))
-                    .foregroundStyle(Color.gsAccentInk)
-                    .buttonStyle(.plain)
-                }
-                .frame(minHeight: 48)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 4)
-        .glassCard(radius: 20, fill: 0.05, stroke: 0.1)
-    }
-
-    private var kitchenTab: some View {
-        VStack(spacing: 0) {
-            infoRow(icon: "globe", title: "Cooks the most", value: store.topCuisine ?? "—")
-            infoRow(icon: "clock", title: "Average cook time",
-                    value: store.recipes.isEmpty ? "—" : "\(store.avgCookTime) min")
-            infoRow(icon: "cart", title: "On the shopping list",
-                    value: "\(store.undoneCount) to buy", isLast: true)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 4)
-        .glassCard(radius: 20, fill: 0.05, stroke: 0.1)
-    }
-
-    private var actionsTab: some View {
-        VStack(spacing: 10) {
-            Button { store.go(to: .importer) } label: {
-                HStack(spacing: 14) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 17, weight: .bold))
-                        .foregroundStyle(Color.white)
-                        .frame(width: 42, height: 42)
-                        .background(Color.gsFg)
-                        .clipShape(Circle())
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Save a new recipe")
-                            .font(nunito(15, .extrabold))
-                        Text("Link · YouTube · photo · text")
-                            .font(nunito(11.5, .semibold))
-                            .foregroundStyle(Color.fg(0.5))
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color.fg(0.4))
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
-                .glassCard(radius: 20, fill: 0.05, stroke: 0.1)
-            }
-            .buttonStyle(.plain)
-
-            Button { store.clearShoppingAll() } label: {
-                Text("Clear shopping list")
-                    .font(nunito(14, .extrabold))
-                    .frame(maxWidth: .infinity, minHeight: 52)
-                    .background(Color.fg(0.06))
-                    .clipShape(Capsule())
-                    .overlay(Capsule().strokeBorder(Color.fg(0.16), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .disabled(store.shopping.isEmpty)
-            .opacity(store.shopping.isEmpty ? 0.45 : 1)
-
-            Button { confirmReset = true } label: {
-                Text("Clear saved library")
-                    .font(nunito(12.5, .bold))
-                    .foregroundStyle(Color.fg(0.4))
-                    .frame(maxWidth: .infinity, minHeight: 44)
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    // MARK: - Privacy & legal
-
-    private var legalSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Privacy & legal")
-                .font(nunito(19, .extrabold))
-
-            Toggle("Allow AI recipe processing", isOn: Binding(
-                get: { store.aiSharingAllowed },
-                set: { value in
-                    if value { store.showAIConsent = true }
-                    else { store.finishAIConsent(allow: false) }
-                }
-            ))
-            .padding(.vertical, 8)
-
-            Button { store.go(to: .support) } label: {
-                HStack(spacing: 14) {
-                    Image(systemName: "bubble.left.and.text.bubble.right.fill")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(Color.white)
-                        .frame(width: 42, height: 42)
-                        .background(Color.gsPeach)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Help & support")
-                            .font(nunito(15, .extrabold))
-                        Text("FAQs & email support")
-                            .font(nunito(11.5, .semibold))
-                            .foregroundStyle(Color.fg(0.5))
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color.fg(0.4))
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
-                .glassCard(radius: 20, fill: 0.05, stroke: 0.1)
-            }
-            .buttonStyle(.plain)
-
-            VStack(spacing: 0) {
-                legalRow(icon: "doc.text", title: "Terms of Use", url: Legal.terms)
-                legalRow(icon: "hand.raised", title: "Privacy Policy", url: Legal.privacy, isLast: !social.signedIn)
-                if social.signedIn {
-                    Button {
-                        deleteConfirmation = ""
-                        deleteFailed = ""
-                        confirmDelete = true
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "trash")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(.red.opacity(0.7))
-                                .frame(width: 20)
-                            Text("Delete my account")
-                                .font(nunito(13.5, .bold))
-                                .foregroundStyle(.red)
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(Color.fg(0.4))
-                        }
-                        .frame(minHeight: 48)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 4)
-            .glassCard(radius: 20, fill: 0.05, stroke: 0.1)
-        }
-    }
-
-    private func legalRow(icon: String, title: String, url: URL, isLast: Bool = false) -> some View {
+    private func linkRow(icon: String, title: String, url: URL, isLast: Bool = false) -> some View {
         Link(destination: url) {
-            HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Color.fg(0.55))
-                    .frame(width: 20)
-                Text(title)
-                    .font(nunito(13.5, .bold))
-                    .foregroundStyle(Color.gsFg)
-                Spacer()
+            rowChrome(isLast: isLast) {
+                iconTile(icon)
+                Text(title).font(nunito(15, .bold)).foregroundStyle(Color.gsFg)
+                Spacer(minLength: 8)
                 Image(systemName: "arrow.up.right")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color.fg(0.4))
-            }
-            .frame(minHeight: 48)
-            .contentShape(Rectangle())
-            .overlay(alignment: .bottom) {
-                if !isLast {
-                    Rectangle().fill(Color.fg(0.07)).frame(height: 1)
-                }
+                    .foregroundStyle(Color.fg(0.35))
             }
         }
     }
 
-    private func infoRow(icon: String, title: String, value: String, isLast: Bool = false) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Color.fg(0.55))
-                .frame(width: 20)
-            Text(title)
-                .font(nunito(13.5, .bold))
-            Spacer()
-            Text(value)
-                .font(nunito(13.5, .bold))
-                .foregroundStyle(Color.fg(0.5))
+    private func toggleRow(icon: String, title: String, isOn: Binding<Bool>, isLast: Bool = false) -> some View {
+        rowChrome(isLast: isLast) {
+            iconTile(icon)
+            Toggle(title, isOn: isOn)
+                .font(nunito(15, .bold))
+                .tint(Color.gsPeach)
         }
-        .frame(minHeight: 48)
-        .overlay(alignment: .bottom) {
-            if !isLast {
-                Rectangle().fill(Color.fg(0.07)).frame(height: 1)
+    }
+
+    private func actionRow(icon: String, title: String, trailing: String? = nil, destructive: Bool = false,
+                           disabled: Bool = false, isLast: Bool = false,
+                           action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            rowChrome(isLast: isLast) {
+                iconTile(icon, destructive: destructive)
+                Text(title)
+                    .font(nunito(15, .bold))
+                    .foregroundStyle(destructive ? Color.red : Color.gsFg)
+                Spacer(minLength: 8)
+                if let trailing {
+                    Text(trailing).font(nunito(13, .extrabold)).foregroundStyle(Color.gsAccentInk)
+                }
             }
         }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.45 : 1)
     }
 
     // MARK: - Disconnect (last item on screen)

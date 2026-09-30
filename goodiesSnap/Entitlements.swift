@@ -33,30 +33,8 @@ struct Entitlement: Codable, Equatable {
         /// Scanning a dish with the camera is the Pro differentiator.
         var allowsCamera: Bool { self == .pro }
 
-        var priceLabel: String {
-            switch self {
-            case .free: return "$0"
-            case .plus: return "$9.99"
-            case .pro: return "$12.99"
-            }
-        }
-
-        /// Yearly price — a real ~33-36% saving against twelve monthly payments.
-        var annualPriceLabel: String {
-            switch self {
-            case .free: return "$0"
-            case .plus: return "$79.99"
-            case .pro: return "$99.99"
-            }
-        }
-
-        var annualLabel: String {
-            switch self {
-            case .free: return ""
-            case .plus: return "or $79.99/year"
-            case .pro: return "or $99.99/year"
-            }
-        }
+        // Prices are never written here: they come from StoreKit per storefront
+        // (`Purchases.priceLabel` / `introPrice`), so every country sees its own.
 
         var isPaid: Bool { self != .free }
 

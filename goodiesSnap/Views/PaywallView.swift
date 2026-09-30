@@ -16,6 +16,8 @@ struct PaywallView: View {
     /// after opening Plus once should still open on Pro.
     static let defaultOfferID = "pro-year"
     @State private var restoring = false
+    /// Monthly / yearly switch above the cards. Yearly leads: it's the better deal.
+    @State private var annual = true
 
     /// A purchasable option as shown on one card.
     struct Offer: Identifiable {
@@ -45,7 +47,7 @@ struct PaywallView: View {
         }
         let period = offer.annual ? "year" : "month"
         var text = "\(offer.name) is \(offer.price) per \(period) and renews automatically every \(period) at that price until you cancel. "
-        if !offer.annual, store.entitlement.welcomeOfferActive, let intro = Promo.introPrice(for: offer.plan) {
+        if !offer.annual, !store.entitlement.plan.isPaid, let intro = purchases.introPrice(for: offer.plan) {
             text = "\(offer.name) is \(intro) for the first month, then \(offer.price) per month, renewing automatically until you cancel. "
         }
         text += "Payment is charged to your Apple account. Cancel any time in Settings > Apple Account > Subscriptions, at least 24 hours before the renewal date. Recipes you've saved stay yours on any plan."
@@ -58,8 +60,8 @@ struct PaywallView: View {
                   plan: .plus, annual: false, save: nil,
                   perks: ["100 recipe imports a month", "Import from video, links & text",
                           "Cost estimates on every list", "Unlimited meal plans",
-                          "Ingredient reuse across your week"]),
-            Offer(id: "plus-year", name: "Plus · Yearly", price: purchases.priceLabel(for: .plus, annual: true), cadence: "/year",
+                          "Ingredient reuse across your week", "Full community access"]),
+            Offer(id: "plus-year", name: "Plus", price: purchases.priceLabel(for: .plus, annual: true), cadence: "/year",
                   plan: .plus, annual: true, save: nil,
                   perks: ["100 recipe imports a month", "Import from video, links & text",
                           "Cost estimates on every list", "Unlimited meal plans",
@@ -67,13 +69,70 @@ struct PaywallView: View {
             Offer(id: "pro-month", name: "Pro", price: purchases.priceLabel(for: .pro, annual: false), cadence: "/month",
                   plan: .pro, annual: false, save: nil,
                   perks: ["Snap a dish and get the recipe", "400 imports & scans a month",
-                          "Everything in Plus"]),
-            Offer(id: "pro-year", name: "Pro · Yearly", price: purchases.priceLabel(for: .pro, annual: true), cadence: "/year",
+                          "Import from video, links & text", "Cost estimates on every list",
+                          "Unlimited meal plans", "Full community access"]),
+            Offer(id: "pro-year", name: "Pro", price: purchases.priceLabel(for: .pro, annual: true), cadence: "/year",
                   plan: .pro, annual: true, save: nil,
                   perks: ["Snap a dish and get the recipe", "400 imports & scans a month",
                           "Import from video, links & text", "Cost estimates on every list",
                           "Unlimited meal plans", "Full community access"]),
         ]
+    }
+
+    /// The two cards for the billing period the switch is on.
+    private var visibleOffers: [Offer] { offers.filter { $0.annual == annual } }
+
+    /// "Save 33%" for the yearly side, from the real StoreKit prices of the cheaper plan, so
+    /// the claim is always true for the storefront. Nil until prices load or if there's no saving.
+    private var yearlySaving: String? {
+        guard let month = purchases.product(for: .plus, annual: false)?.price,
+              let year = purchases.product(for: .plus, annual: true)?.price,
+              month > 0 else { return nil }
+        let pct = Int((1 - NSDecimalNumber(decimal: year / (month * 12)).doubleValue) * 100)
+        return pct > 0 ? "Save \(pct)%" : nil
+    }
+
+    /// Flips the period and keeps the same plan open on the other side.
+    private func setAnnual(_ value: Bool) {
+        guard value != annual else { return }
+        Haptics.tap(.light)
+        let plan = selected.hasPrefix("plus") ? "plus" : "pro"
+        withAnimation(AppStore.stepAnimation) {
+            annual = value
+            selected = "\(plan)-\(value ? "year" : "month")"
+        }
+    }
+
+    private var billingSwitch: some View {
+        HStack(spacing: 4) {
+            switchSegment("Monthly", badge: nil, on: !annual) { setAnnual(false) }
+            switchSegment("Yearly", badge: yearlySaving, on: annual) { setAnnual(true) }
+        }
+        .padding(4)
+        .background(Color.gsFill, in: Capsule())
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Billing period")
+    }
+
+    private func switchSegment(_ title: String, badge: String?, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(title).font(nunito(14.5, .extrabold))
+                if let badge {
+                    Text(badge)
+                        .font(nunito(11, .black))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(on ? Color.gsPeach : Color.gsPeach.opacity(0.45), in: Capsule())
+                }
+            }
+            .foregroundStyle(on ? Color.white : Color.gsFg)
+            .frame(maxWidth: .infinity, minHeight: 42)
+            .background(on ? Color.gsDock : Color.clear, in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 
     /// What the user keeps without paying. Stated plainly on the end-of-onboarding pitch,
@@ -103,17 +162,23 @@ struct PaywallView: View {
                 header
 
                 // Stacked cards. Later cards sit on top so each one tucks under the next tab.
+                billingSwitch
+                    .padding(.top, 22)
+
                 VStack(spacing: -16) {
-                    ForEach(Array(offers.enumerated()), id: \.element.id) { i, offer in
+                    ForEach(Array(visibleOffers.enumerated()), id: \.element.id) { i, offer in
                         PlanTabCard(
                             offer: offer,
-                            style: style(i),
+                            // Plus soft, Pro the dark hero at the bottom.
+                            style: style(i == 0 ? 2 : 3),
                             expanded: selected == offer.id,
                             isCurrent: store.entitlement.plan == offer.plan
                                 && store.entitlement.annualBilling == offer.annual,
                             renewal: store.entitlement.renewalCountdown,
-                            introPrice: (store.entitlement.welcomeOfferActive && !offer.annual)
-                                ? Promo.introPrice(for: offer.plan) : nil,
+                            // The App Store's first-month offer, in local currency, only for
+                            // accounts Apple says are still eligible.
+                            introPrice: (!offer.annual && !store.entitlement.plan.isPaid)
+                                ? purchases.introPrice(for: offer.plan) : nil,
                             onSelect: { withAnimation(AppStore.stepAnimation) { selected = offer.id } },
                             onChoose: { choose(offer) }
                         )
@@ -121,7 +186,7 @@ struct PaywallView: View {
                         .zIndex(Double(i))
                     }
                 }
-                .padding(.top, 26)
+                .padding(.top, 18)
 
                 if store.paywallReason == .onboardingComplete {
                     freeCard.padding(.top, 20)
@@ -187,6 +252,7 @@ struct PaywallView: View {
             // A camera-gated visit is specifically about Pro's scanning, so open the monthly
             // Pro card there; everywhere else the yearly one leads.
             selected = store.paywallReason == .cameraIsPro ? "pro-month" : Self.defaultOfferID
+            annual = selected.hasSuffix("year")
         }
     }
 
@@ -270,7 +336,10 @@ struct PaywallView: View {
     }
 
     private func choose(_ offer: Offer) {
-        guard store.isAuthenticated else {
+        // Guests buy straight away — Apple rejects apps that force sign-up before a purchase
+        // (5.1.1). The guest is a real server account, so the receipt has an owner, and the
+        // subscription moves to their own account when they sign up.
+        guard store.isAuthenticated || store.isGuestSession else {
             store.showAuth(.upgrade)
             return
         }

@@ -50,12 +50,20 @@ final class Purchases: ObservableObject {
     @Published private(set) var purchasing: String?
     /// The plan Apple says is currently active, independent of anything stored locally.
     @Published private(set) var activePlan: Entitlement.Plan = .free
+    /// Whether this Apple Account can still take the first-month introductory offer. Apple
+    /// allows it once per subscription group, so it's asked of StoreKit, never tracked locally.
+    @Published private(set) var introEligible = false
 
     /// Called after the server has confirmed a plan, so AppStore can apply it.
     var onPlanChange: ((Entitlement.Plan) -> Void)?
     /// Supplies the current auth token. Without one, the receipt cannot be attributed to a
     /// user, so the purchase stays on device until they sign in.
     var authToken: (() -> String?)?
+    #if DEBUG
+    /// Called when a purchase made with Xcode's StoreKit test file can't be verified by the
+    /// server, so the app pins the plan locally for testing.
+    var onXcodeTestPurchase: (() -> Void)?
+    #endif
 
     private var updatesTask: Task<Void, Never>?
 
@@ -81,6 +89,10 @@ final class Purchases: ObservableObject {
         do {
             let loaded = try await Product.products(for: ProductID.all)
             products = loaded.sorted { $0.price < $1.price }
+            // Eligibility is per subscription group, so any product in the group answers it.
+            if let sub = loaded.first?.subscription {
+                introEligible = await sub.isEligibleForIntroOffer
+            }
             print("[Purchases] loaded \(products.count) products: \(products.map(\.id))")
         } catch {
             print("[Purchases] loadProducts failed: \(error)")
@@ -92,6 +104,20 @@ final class Purchases: ObservableObject {
         guard let id = ProductID.id(for: plan, annual: annual) else { return nil }
         return products.first { $0.id == id }
     }
+
+    /// The first-month promo price for a monthly plan, in the customer's own currency, or nil
+    /// when there's no introductory offer in App Store Connect or this account already used it.
+    /// It comes from StoreKit, so it can never advertise a price Apple won't actually charge.
+    func introPrice(for plan: Entitlement.Plan) -> String? {
+        guard introEligible,
+              let offer = product(for: plan, annual: false)?.subscription?.introductoryOffer,
+              offer.paymentMode == .payAsYouGo || offer.paymentMode == .payUpFront
+        else { return nil }
+        return offer.displayPrice
+    }
+
+    /// True when at least one monthly plan has a first-month promo this customer can take.
+    var hasIntroOffer: Bool { introPrice(for: .plus) != nil || introPrice(for: .pro) != nil }
 
     /// Localized price from StoreKit when available — never a hard-coded string, since the
     /// real price varies by storefront. Never invent a price when products are unavailable.
@@ -195,6 +221,11 @@ final class Purchases: ObservableObject {
                 // locally now — the user paid and must get access. We deliberately do NOT
                 // finish it, so `Transaction.updates` replays it and the server records it
                 // for quota once it can. Metering stays server-authoritative via the AI proxy.
+                #if DEBUG
+                // Xcode's StoreKit testing signs transactions with a local certificate that
+                // the server can never verify, so keep this test purchase on the device.
+                if transaction.environment == .xcode { onXcodeTestPurchase?() }
+                #endif
                 activePlan = plan
                 onPlanChange?(plan)
                 return .success(plan)

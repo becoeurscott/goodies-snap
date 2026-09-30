@@ -37,7 +37,10 @@ struct GoodiesSnapApp: App {
                         if let token = social?.session?.accessToken {
                             store?.aiToken = token
                             store?.currentUserID = social?.session?.userID
-                            Task {
+                            Task { [purchases] in
+                                // Re-send any subscription bought as a guest, so the server
+                                // moves it onto this account before we read the plan back.
+                                await purchases.refreshEntitlements()
                                 await store?.refreshServerEntitlement(token: token)
                                 // Bring this account's saved recipes/plan/answers onto the device.
                                 await store?.pullAndMergeServerState()
@@ -47,6 +50,9 @@ struct GoodiesSnapApp: App {
                     // Disconnect: reset the app to a logged-out state and return to onboarding.
                     social.onSignedOut = { [weak store] in store?.signedOut() }
                     purchases.onPlanChange = { [weak store] plan in store?.applyPurchasedPlan(plan) }
+                    #if DEBUG
+                    purchases.onXcodeTestPurchase = { [weak store] in store?.debugPlanUnlocked = true }
+                    #endif
                     // Drop a stale/deleted persisted login before the UI trusts it.
                     await social.validateSession()
                     await purchases.loadProducts()

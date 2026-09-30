@@ -498,9 +498,13 @@ final class AppStore: ObservableObject {
     /// Applies a plan that Apple (and, when signed in, our server) has confirmed.
     /// This is the only path that may raise the plan — nothing in the UI sets it directly.
     #if DEBUG
-    /// Set once a DEBUG-only local unlock has been used, so the server sync stops reverting
-    /// the plan to "free". Never compiled into release builds.
-    var debugPlanUnlocked = false
+    /// Set once a DEBUG-only local unlock or an Xcode StoreKit-test purchase has been used, so
+    /// the server sync stops reverting the plan to "free" (the server rightly refuses Xcode's
+    /// locally-signed receipts). Kept across launches. Never compiled into release builds.
+    var debugPlanUnlocked: Bool {
+        get { UserDefaults.standard.bool(forKey: "gsDebugPlanPinned") }
+        set { UserDefaults.standard.set(newValue, forKey: "gsDebugPlanPinned") }
+    }
 
     /// Testing shortcut for when StoreKit products can't load (e.g. the plain simulator, where
     /// `simctl launch` doesn't apply the StoreKit config). Flips the plan locally and pins it so
@@ -532,18 +536,14 @@ final class AppStore: ObservableObject {
     #if DEBUG
     func activate(_ plan: Entitlement.Plan, annual: Bool = false) {
         Haptics.notify(.success)
-        let tookWelcome = entitlement.welcomeOfferActive
         entitlement.plan = plan
         entitlement.annualBilling = annual
         entitlement.period = Entitlement.currentPeriod
         entitlement.used = 0
         entitlement.trialUntil = nil
-        if tookWelcome { entitlement.introUsed = true }
         persistEntitlement()
         goBack()
-        showToast(tookWelcome
-                  ? "\(plan.title) active at \(Promo.introPrice(for: plan) ?? "") for your first month"
-                  : "\(plan.title) is active — \(plan.allowance) AI actions")
+        showToast("\(plan.title) is active — \(plan.allowance) AI actions")
     }
 
     // MARK: - Promotions

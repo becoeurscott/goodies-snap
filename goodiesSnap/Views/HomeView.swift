@@ -216,6 +216,7 @@ struct Highlight: Identifiable {
 /// user takes over by swiping — auto-advance that fights the reader is worse than none.
 struct HighlightStrip: View {
     @EnvironmentObject var store: AppStore
+    @EnvironmentObject var purchases: Purchases
     @State private var index = 0
     @State private var userTookOver = false
 
@@ -223,11 +224,12 @@ struct HighlightStrip: View {
         var out: [Highlight] = []
 
         // Time-limited offers lead — they're the only card with a deadline.
-        if store.entitlement.welcomeOfferActive {
+        if !store.entitlement.plan.isPaid, let intro = purchases.introPrice(for: .plus),
+           let full = purchases.product(for: .plus, annual: false)?.displayPrice {
             out.append(Highlight(
-                id: "welcome", kicker: "Welcome offer",
-                title: "Plus for \(Promo.introPrice(for: .plus) ?? "")",
-                subtitle: "Then \(Entitlement.Plan.plus.priceLabel)/mo · \(store.entitlement.welcomeCountdown)",
+                id: "welcome", kicker: "First month offer",
+                title: "Plus for \(intro)",
+                subtitle: "Your first month, then \(full)/month",
                 icon: "gift.fill", cta: "Claim it",
                 image: Highlight.stock("welcome"), action: { $0.showPaywall(.upgrade) }
             ))
